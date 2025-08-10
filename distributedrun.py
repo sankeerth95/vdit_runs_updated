@@ -5,11 +5,10 @@ import torch
 import torch.distributed
 import torch.distributed.rpc
 import os
-import time
 import distributedrunconfig
 import threading
 import diffusers.utils
-from pathlib import Path
+import pathlib
 
 
 dist = torch.distributed
@@ -72,7 +71,6 @@ class AtomicCounterScheduler:
         return current_val
 
 
-
 def run(config):
     if not ("RANK" in os.environ and "WORLD_SIZE" in os.environ):
         print("torchrun not properly setup")
@@ -93,15 +91,13 @@ def run(config):
     with open('VBench_full_info.json', 'r') as f:
         data = json.load(f)
 
-
-
     # scheduler = RoundRobinScheduler(len(data), rank, world_size)
     scheduler = AtomicCounterScheduler(len(data), rank, world_size, dist)
 
 
     pipe = config['init_fn'](**config["init_fn_kwargs"])
     model_name = config['model_name']
-    base_output_dir =  Path(config["generated_vids_dir"])
+    base_output_dir =  pathlib.Path(config["generated_vids_dir"])
     num_samples = config["num_samples"]
 
 
@@ -122,8 +118,6 @@ def run(config):
         print(dimensions)
         print(f"Rank {rank}: Generating {num_samples} samples for prompt: {prompt[:50]}...")
 
-        time.sleep(2)
-        continue
 
         for sample_idx in range(num_samples):
             num_file_exists = 0
@@ -142,6 +136,8 @@ def run(config):
                 print(f"Video already exists in all paths: {prompt}-{sample_idx}.mp4. Skipping...")
                 continue
             try:
+                torch.cuda.empty_cache()
+                config("set_attnprocessor_fn")(pipe, **config["attnprocessor_kwargs"])
                 frames = config['run_fn'](
                     pipe,
                     prompt,
@@ -156,7 +152,8 @@ def run(config):
             except Exception as e:
                 print(f"Rank {rank}: Error generating sample {sample_idx} for prompt '{prompt[:50]}...': {e}")
                 continue
-    
+
+
 
     print(f"Rank {rank}: Finished generating all videos")
     rpc.shutdown()
@@ -166,6 +163,6 @@ def run(config):
 
 
 if __name__ == '__main__':
-    run(distributedrunconfig.get_wan21_1_3b_480x832x81_config())
+    run(distributedrunconfig.get_wan21_1_3b_480x832x81_baseline_config())
 
 

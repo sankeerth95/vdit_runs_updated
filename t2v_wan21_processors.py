@@ -4,24 +4,39 @@ import diffusers
 import diffusers.models.transformers
 import typing
 import spattn.sparseattn_functionals
+import spattn.mask_utils
 
 
+mask_utils = spattn.mask_utils
 sparseattn_functionals = spattn.sparseattn_functionals
 WanAttnProcessor = diffusers.models.transformers.transformer_wan.WanAttnProcessor2_0
 
 
 class MyCustomProcessor(WanAttnProcessor):
-    def __init__(self, thresh=0.75/75600., blocksz = 128, select_k = 8192):
+    def __init__(self, *args, **kwargs):
         super().__init__()
-        self.thresh=thresh
-        self.blocksz = blocksz
-        self.select_k = select_k
 
-        self.num_layers = 40
-        self.dit_run = 0
+        self.processor_kwargs = kwargs
+        self.num_layers = kwargs["num_layers"]
+        self.ditrun = 0
         self.current_layer = 0
-        self._mask_cache = None #mask_utils.MaskCache(1, 12, 32760, blocksz, offload=False)
-        self.attn_fn = sparseattn_functionals.attn_computed_with_sparse_mask_cuda
+
+        if kwargs["processor"] == "baseline":
+            self.attn_fn = sparseattn_functionals.baseline_attn
+        elif kwargs["processor"] == "cached":
+            self.attn_fn = sparseattn_functionals.cached_attn_cuda
+            if kwargs["compress"]:
+                self.processor_kwargs["mask_cache"] = mask_utils.CompressMaskCache(kwargs["compute_cache_at"])
+            else:
+                self.processor_kwargs["mask_cache"] = mask_utils.NaiveMaskCache(kwargs["compute_cache_at"])
+        elif kwargs["processor"] == "topk":
+            self.attn_fn = sparseattn_functionals.attn_computed_with_sparse_mask_cuda
+        elif kwargs["processor"] == "lsh":
+            raise NotImplementedError("LSH not implemented yet")
+        else:
+            raise ValueError("Error: Unrecognized type of attention processor/not implemented")
+
+
 
     # overloading function right here
     def __call__(
@@ -81,14 +96,10 @@ class MyCustomProcessor(WanAttnProcessor):
             hidden_states_img = hidden_states_img.transpose(1, 2).flatten(2, 3)
             hidden_states_img = hidden_states_img.type_as(query)
 
-        hidden_states = self.attn_fn(
-            query, key, value, attn_mask=attention_mask, thresh=self.thresh, 
-            blocksz=self.blocksz, select_k=self.select_k, current_layer=self.current_layer, 
-            ditrun=self.dit_run, mask_cache=self._mask_cache
-        )
+        hidden_states = self.attn_fn(query, key, value, self.current_layer, self.ditrun, **self.processor_kwargs)
 
-        if self.current_layer == 0:
-            self.dit_run += 1
+        if self.current_layer == self.num_layers-1:
+            self.ditrun += 1
         self.current_layer = (self.current_layer + 1) % self.num_layers
 
         hidden_states = hidden_states.transpose(1, 2).flatten(2, 3)
