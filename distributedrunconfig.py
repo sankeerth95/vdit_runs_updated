@@ -4,12 +4,13 @@ import t2v_wan21
 def test_config():
     return {
         "model_name": "wan21_1.3b_480x832x81_test",
-        "generated_vids_dir": "generated_vids/test",
+        "generated_vids_dir": "generated_vids",
         "num_samples": 5,
         "init_fn": t2v_wan21.get_wan21_pipeline,
         "init_fn_kwargs": {
             "model_path": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
         },
+        "set_attnprocessor_fn": t2v_wan21.set_wan21_attention,
         "attnprocessor_kwargs": {
             "processor": "cached",
             "num_layers": 30,
@@ -35,12 +36,13 @@ def test_config():
 def get_wan21_1_3b_480x832x81_baseline_config():
     return {
         "model_name": "wan21_1.3b_480x832x81_baseline",
-        "generated_vids_dir": "generated_vids/wan21_1.3b_480x832x81",
+        "generated_vids_dir": "generated_vids",
         "num_samples": 5,
         "init_fn": t2v_wan21.get_wan21_pipeline,
         "init_fn_kwargs": {
             "model_path": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
         },
+        "set_attnprocessor_fn": t2v_wan21.set_wan21_attention,
         "attnprocessor_kwargs": {
             "processor": "baseline",
             "num_layers": 30,

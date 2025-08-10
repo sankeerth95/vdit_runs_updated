@@ -3,7 +3,7 @@
 #SBATCH --job-name=generate_vDIT_vids_1.3_64x1_6       # Name of your job
 #SBATCH --output=logs/out_cuda_test_%j.out  # Standard output file
 #SBATCH --error=logs/err_generatevdit_%j.err  # Standard error file
-#SBATCH --nodes=2                          # Request one node. 2 nodes doesn't work because of socket timeout
+#SBATCH --nodes=20                          # Request one node. 2 nodes doesn't work because of socket timeout
 #SBATCH --ntasks-per-node=1                 # torchrun manages processes (spawns subprocesses)
 #SBATCH --gpus-per-node=8
 #SBATCH --mem=64gb

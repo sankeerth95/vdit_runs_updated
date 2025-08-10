@@ -84,27 +84,24 @@ if __name__ == '__main__':
   prompt = "a horse bending down to drink water from a river"
   # prompt = "A beautiful coastal beach in spring, waves lapping on sand by Vincent van Gogh"
   # prompt = "An oil painting of a couple in formal evening wear going home get caught in a heavy downpour with umbrellas"
-
   config = distributedrunconfig.test_config()
-  pipe = config['init_fn'](**config["init_fn_kwargs"])
-  set_wan21_attention(pipe, **config["attnprocessor_kwargs"])
+  output_dir = pathlib.Path(config["generated_vids_dir"]) / config["model_name"]
+  print(output_dir)
+  exit()
 
-  # sequence length is either 32760 or 75600
-  run_fn_kwargs = config["run_fn_kwargs"]
+
+  pipe = config['init_fn'](**config["init_fn_kwargs"])
+  config["set_attnprocessor_fn"](pipe, **config["attnprocessor_kwargs"])
   frames = config["run_fn"](
     pipe,
     prompt,
-    negative_prompt=run_fn_kwargs["negative_prompt"],
-    height=run_fn_kwargs["height"],
-    width=run_fn_kwargs["width"],
-    num_frames=run_fn_kwargs["num_frames"],
-    guidance_scale=run_fn_kwargs["guidance_scale"],
-    num_inference_steps=run_fn_kwargs["num_inference_steps"],
+    **config["run_fn_kwargs"]
   )
-  output_dir = pathlib.Path(config["generated_vids_dir"]) 
-  os.mkdir(output_dir)
-  output_path = output_dir / f'test.mp4'
-  diffusers.utils.export_to_video(frames, output_path, fps=config["fps"])
+
+  output_dir = pathlib.Path(config["generated_vids_dir"]) / config["model_name"]
+  output_dir.mkdir(parents=True, exist_ok=True)
+  filepath = output_dir / f'test.mp4'
+  diffusers.utils.export_to_video(frames, filepath, fps=config["fps"])
   torch.cuda.empty_cache()
 
 

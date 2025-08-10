@@ -97,11 +97,11 @@ def run(config):
 
     pipe = config['init_fn'](**config["init_fn_kwargs"])
     model_name = config['model_name']
-    base_output_dir =  pathlib.Path(config["generated_vids_dir"])
+    base_output_dir =  pathlib.Path(config["generated_vids_dir"]) / config["model_name"]
     num_samples = config["num_samples"]
 
 
-    print(f'Rank {rank}: starting to generating frames for {model_name}')
+    print(f'Rank {rank}: starting to generate frames for {model_name}')
     dist.barrier()
     while True:
         prompt_idx = scheduler.get_next_workitem()
@@ -137,13 +137,12 @@ def run(config):
                 continue
             try:
                 torch.cuda.empty_cache()
-                config("set_attnprocessor_fn")(pipe, **config["attnprocessor_kwargs"])
-                frames = config['run_fn'](
+                config["set_attnprocessor_fn"](pipe, **config["attnprocessor_kwargs"])
+                frames = config["run_fn"](
                     pipe,
                     prompt,
                     **config["run_fn_kwargs"],
                 )
-                
                 for filepath in filepaths:
                     export_to_video(frames, filepath, fps=config["fps"])
                     
@@ -163,6 +162,6 @@ def run(config):
 
 
 if __name__ == '__main__':
-    run(distributedrunconfig.get_wan21_1_3b_480x832x81_baseline_config())
+    run(distributedrunconfig.get_wan21_1_3b_480x832x81_cached_config())
 
 
