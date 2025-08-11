@@ -85,10 +85,6 @@ if __name__ == '__main__':
   # prompt = "A beautiful coastal beach in spring, waves lapping on sand by Vincent van Gogh"
   # prompt = "An oil painting of a couple in formal evening wear going home get caught in a heavy downpour with umbrellas"
   config = distributedrunconfig.test_config()
-  output_dir = pathlib.Path(config["generated_vids_dir"]) / config["model_name"]
-  print(output_dir)
-  exit()
-
 
   pipe = config['init_fn'](**config["init_fn_kwargs"])
   config["set_attnprocessor_fn"](pipe, **config["attnprocessor_kwargs"])
