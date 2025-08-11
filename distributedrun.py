@@ -162,6 +162,6 @@ def run(config):
 
 
 if __name__ == '__main__':
-    run(distributedrunconfig.get_wan21_1_3b_480x832x81_cached_config())
-
+    # run(distributedrunconfig.get_wan21_1_3b_480x832x81_cached_config())
+    run(distributedrunconfig.get_wan21_1_3b_720x1280x81_bitmaskcached_config())
 
