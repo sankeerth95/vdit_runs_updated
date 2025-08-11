@@ -27,8 +27,17 @@ class MyCustomProcessor(WanAttnProcessor):
             self.attn_fn = sparseattn_functionals.cached_attn_cuda
             if kwargs["compress"]:
                 self.processor_kwargs["mask_cache"] = mask_utils.CompressMaskCache(kwargs["compute_cache_at"])
+            elif kwargs["offload"]:
+                self.processor_kwargs["mask_cache"] = mask_utils.OffloadMaskCache(kwargs["compute_cache_at"])
             else:
                 self.processor_kwargs["mask_cache"] = mask_utils.NaiveMaskCache(kwargs["compute_cache_at"])
+        elif kwargs["processor"] == "bitmask":
+            self.attn_fn = sparseattn_functionals.bitmaskcached_attn_cuda
+            if kwargs["compress"]:
+                self.processor_kwargs["mask_cache"] = mask_utils.CompressedBitMaskCache(kwargs["compute_cache_at"])
+            else:
+                self.processor_kwargs["mask_cache"] = mask_utils.BitMaskCache(kwargs["compute_cache_at"])
+
         elif kwargs["processor"] == "topk":
             self.attn_fn = sparseattn_functionals.attn_computed_with_sparse_mask_cuda
         elif kwargs["processor"] == "lsh":
