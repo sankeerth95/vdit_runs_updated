@@ -75,6 +75,7 @@ def run(config):
     if not ("RANK" in os.environ and "WORLD_SIZE" in os.environ):
         print("torchrun not properly setup")
         exit()
+    host = os.getenv("SLURM_NODEID") 
     rank = int(os.environ["RANK"])
     world_size = int(os.environ["WORLD_SIZE"])
     local_rank = int(os.environ["LOCAL_RANK"])
@@ -94,8 +95,11 @@ def run(config):
     # scheduler = RoundRobinScheduler(len(data), rank, world_size)
     scheduler = AtomicCounterScheduler(len(data), rank, world_size, dist)
 
-
     pipe = config['init_fn'](**config["init_fn_kwargs"])
+    pipe.to(f'cuda:{local_rank}')
+    pipe.enable_model_cpu_offload(local_rank)
+    # pipe.transformer.compile(mode='reduce-overhead', dynamic=True)
+
     model_name = config['model_name']
     base_output_dir =  pathlib.Path(config["generated_vids_dir"]) / config["model_name"]
     num_samples = config["num_samples"]
@@ -146,10 +150,10 @@ def run(config):
                 for filepath in filepaths:
                     export_to_video(frames, filepath, fps=config["fps"])
                     
-                print(f"Rank {rank}: Saved sample {sample_idx} for prompt in {len(dimensions)} dimension(s)")
+                print(f"Rank {rank}, host {host}: Saved sample {sample_idx} for prompt in {len(dimensions)} dimension(s)")
                 
             except Exception as e:
-                print(f"Rank {rank}: Error generating sample {sample_idx} for prompt '{prompt[:50]}...': {e}")
+                print(f"Rank {rank}, host {host}: Error generating sample {sample_idx} for prompt '{prompt[:50]}...': {e}")
                 continue
 
 
@@ -162,6 +166,15 @@ def run(config):
 
 
 if __name__ == '__main__':
+    # run(distributedrunconfig.get_wan21_1_3b_480x832x81_baseline_config())
+    # run(distributedrunconfig.get_wan21_1_3b_720x1280x81_baseline_config())
+    # run(distributedrunconfig.get_wan21_14b_480x832x81_baseline_config())
+    # run(distributedrunconfig.get_wan21_14b_720x1280x81_baseline_config())
+    # run(distributedrunconfig.get_cogvideox_480x720x49_baseline_config())
+    run(distributedrunconfig.get_cogvideox1_5_768x1360x81_baseline_config())
+    # run(distributedrunconfig.get_hunyuan_720x1280x81_baseline_config())
+
     # run(distributedrunconfig.get_wan21_1_3b_480x832x81_cached_config())
-    run(distributedrunconfig.get_wan21_1_3b_720x1280x81_bitmaskcached_config())
+    # run(distributedrunconfig.get_wan21_1_3b_480x832x81_bitmaskcached_config())
+
 

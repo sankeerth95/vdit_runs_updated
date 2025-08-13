@@ -3,18 +3,16 @@ import diffusers  # pylint: disable=unused-import
 import torch
 import torch.nn.functional as F
 import transformers  # pylint: disable=unused-import
-import t2v_wan21_processors
+import t2v_cogvideox_processor
 import numpy as np
 import random
+import os
 import pathlib
 
+CogVideoXPipeline = diffusers.CogVideoXPipeline
 
-AutoencoderKLWan = diffusers.AutoencoderKLWan
-WanPipeline = diffusers.WanPipeline
-
-
-def set_wan21_attention(pipe, *args, **kwargs):
-  attn_processor = t2v_wan21_processors.MyCustomProcessor(**kwargs)
+def set_cogvideox_attention(pipe, *args, **kwargs):
+  attn_processor = t2v_cogvideox_processor.CustomProcessor(**kwargs)
   for name, module in pipe.transformer.named_modules():
     if 'attn1' in name:
         if hasattr(module, 'set_processor'):
@@ -22,18 +20,16 @@ def set_wan21_attention(pipe, *args, **kwargs):
             module.set_processor(attn_processor)
 
 
-def get_wan21_pipeline(model_path, *args, **kwargs):
-  print("Loading WAN2.1 model from", model_path)
-  vae = AutoencoderKLWan.from_pretrained(
-      model_path, subfolder="vae", torch_dtype=torch.float32
-  )
-  pipe = WanPipeline.from_pretrained(
-      model_path, vae=vae, torch_dtype=torch.bfloat16,
+def get_cogvideox_pipeline(model_path, *args, **kwargs):
+  print(f"Loading CogVideoX model from {model_path}")
+  pipe = CogVideoXPipeline.from_pretrained(
+      model_path,
+      torch_dtype=torch.bfloat16
   )
   return pipe
 
 
-def run_wan21(
+def run_cogvideox(
     pipe,
     prompt,
     negative_prompt="",
@@ -42,10 +38,10 @@ def run_wan21(
     num_frames=81,
     guidance_scale=5.0,
     num_inference_steps=50):
-  """Runs the WAN2.1 model to generate a video.
+  """Runs the CogVideoX model to generate a video.
 
   Args:
-    pipe: The WAN2.1 pipeline.
+    pipe: The CogVideoX pipeline.
     prompt: The text prompt.
     negative_prompt: The negative text prompt.
     height: The height of the video.
@@ -81,10 +77,12 @@ if __name__ == '__main__':
   prompt = "a horse bending down to drink water from a river"
   # prompt = "A beautiful coastal beach in spring, waves lapping on sand by Vincent van Gogh"
   # prompt = "An oil painting of a couple in formal evening wear going home get caught in a heavy downpour with umbrellas"
-  config = distributedrunconfig.test_config()
+  # config = distributedrunconfig.get_cogvideox_480x720x49_baseline_config()
+  config = distributedrunconfig.get_cogvideox1_5_768x1360x81_baseline_config()
 
   pipe = config['init_fn'](**config["init_fn_kwargs"])
   config["set_attnprocessor_fn"](pipe, **config["attnprocessor_kwargs"])
+
   frames = config["run_fn"](
     pipe,
     prompt,
