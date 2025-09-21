@@ -5,11 +5,21 @@ import diffusers.models.transformers
 import typing
 import spattn.sparseattn_functionals
 import spattn.mask_utils
-
+import time
 
 mask_utils = spattn.mask_utils
 sparseattn_functionals = spattn.sparseattn_functionals
 WanAttnProcessor = diffusers.models.transformers.transformer_wan.WanAttnProcessor2_0
+
+def benchmark_and_run_attn(attn_fn, *args, **kwargs):
+    torch.cuda.synchronize()
+    t0 = time.time()
+    N = 20
+    for i in range(N):
+        hidden_states = attn_fn(*args, **kwargs)
+    torch.cuda.synchronize()
+    t1 = time.time()
+    print('time = ', (t1-t0)/N, 's')
 
 
 class MyCustomProcessor(WanAttnProcessor):
@@ -42,6 +52,9 @@ class MyCustomProcessor(WanAttnProcessor):
             self.attn_fn = sparseattn_functionals.attn_computed_with_sparse_mask_cuda
         elif kwargs["processor"] == "lsh":
             raise NotImplementedError("LSH not implemented yet")
+        elif kwargs["processor"] == "2x":
+            self.attn_fn = sparseattn_functionals.attn_2xmask_cuda
+
         else:
             raise ValueError("Error: Unrecognized type of attention processor/not implemented")
 
@@ -106,6 +119,18 @@ class MyCustomProcessor(WanAttnProcessor):
             hidden_states_img = hidden_states_img.type_as(query)
 
         hidden_states = self.attn_fn(query, key, value, self.current_layer, self.ditrun, **self.processor_kwargs)
+        # if self.ditrun %13 == 1:
+        #     benchmark_and_run_attn(self.attn_fn, query, key, value, self.current_layer, self.ditrun, **self.processor_kwargs)
+        #     torch.cuda.synchronize()
+        #     t0 = time.time()
+        #     N = 20
+        #     for i in range(N):
+        #         hidden_states = F.scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False)
+        #     torch.cuda.synchronize()
+        #     t1 = time.time()
+        #     print('time = ', (t1-t0)/N, 's')
+
+
 
         if self.current_layer == self.num_layers-1:
             self.ditrun += 1

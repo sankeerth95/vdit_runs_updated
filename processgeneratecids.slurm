@@ -1,15 +1,15 @@
 #!/bin/bash
 
-#SBATCH --job-name=generate_vDIT_cached       # Name of your job
+#SBATCH --job-name=processgeneratevids       # Name of your job
 #SBATCH --output=logs/out_cuda_test_%j.out  # Standard output file
 #SBATCH --error=logs/err_generatevdit_%j.err  # Standard error file
-#SBATCH --nodes=20                          # Request one node. 2 nodes doesn't work because of socket timeout
+#SBATCH --nodes=21                          # Request one node. 2 nodes doesn't work because of socket timeout
 #SBATCH --ntasks-per-node=1                 # torchrun manages processes (spawns subprocesses)
 #SBATCH --gpus-per-node=8
 #SBATCH --mem=64gb
 #SBATCH --time=09:10:00                     # Wall-clock time limit (HH:MM:SS)
 #SBATCH --partition=defq                    # Specify the GPU partition (this may vary on your system)
-#SBATCH --exclude=dgx-15,dgx-04,dgx-14             # these don't seem to work
+#SBATCH --exclude=dgx-15,dgx-04             # these don't seem to work
 
 
 export MASTER_PORT=$(expr 10000 + $(echo -n $SLURM_JOBID | tail -c 4))
@@ -48,7 +48,7 @@ CMD="/home/sdurvasula/miniconda3/envs/spartan/bin/torchrun \
     --rdzv_id=$SLURM_JOBID \
     --rdzv_backend=c10d \
     --rdzv_endpoint=$MASTER_ADDR:$MASTER_PORT \
-    distributedrun.py 8"
+    processdistributedrun.py"
 
 
 # CMD="pip install imageio imageio-ffmpeg"
@@ -68,12 +68,3 @@ srun \
     --container-name=${CONT_NAME} \
     --distribution=block:block \
     ${CMD}
-
-# srun \
-#     --container-image=${CONT_IMG} \
-#     --container-mounts=${CONT_MOUNTS} \
-#     --container-workdir=${CONT_WORKSPACE} \
-#     --container-name=${CONT_NAME} \
-#     --distribution=block:block \
-#     ${CMD}
-

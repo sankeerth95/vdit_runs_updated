@@ -5,12 +5,14 @@ import torch
 import torch.distributed
 import torch.distributed.rpc
 import os
-import distributedrunconfig
 import threading
 import diffusers.utils
 import pathlib
 import numpy as np
 import random
+import subprocess
+import sys
+
 
 
 dist = torch.distributed
@@ -81,14 +83,14 @@ def run(config):
     rank = int(os.environ["RANK"])
     world_size = int(os.environ["WORLD_SIZE"])
     local_rank = int(os.environ["LOCAL_RANK"])
-    dist.init_process_group("gloo", rank=rank, world_size=world_size)
+    dist.init_process_group("nccl", rank=rank, world_size=world_size)
     rpc.init_rpc(
         name=f"worker{rank}", rank=rank, world_size=world_size,
         rpc_backend_options=rpc.TensorPipeRpcBackendOptions(_channels=[
             "cma", "mpt_uv", "basic", "cuda_xth", "cuda_ipc", "cuda_basic"
         ]),
     )
-    torch.cuda.set_device(local_rank)
+    # torch.cuda.set_device(local_rank)
     print(f"Hello from Rank {rank}/{world_size} on GPU {local_rank} on node {os.getenv('SLURM_NODEID')}!")
 
     with open('VBench_full_info.json', 'r') as f:
@@ -97,19 +99,22 @@ def run(config):
     # scheduler = RoundRobinScheduler(len(data), rank, world_size)
     scheduler = AtomicCounterScheduler(len(data), rank, world_size, dist)
 
-    pipe = config['init_fn'](**config["init_fn_kwargs"])
-    pipe.to(f'cuda:{local_rank}')
-    pipe.enable_model_cpu_offload(local_rank)
     # pipe.transformer.compile(mode='reduce-overhead', dynamic=True)
 
     model_name = config['model_name']
     base_output_dir =  pathlib.Path(config["generated_vids_dir"]) / config["model_name"]
     num_samples = config["num_samples"]
 
+    child_env = os.environ.copy()
 
+    # 2. Add or modify the environment variables
+    child_env["CUDA_VISIBLE_DEVICES"] = f"{local_rank}"
     print(f'Rank {rank}: starting to generate frames for {model_name}')
     dist.barrier()
+
+    error = False
     while True:
+
         prompt_idx = scheduler.get_next_workitem()
         if prompt_idx is None:
             break
@@ -142,24 +147,46 @@ def run(config):
                 print(f"Video already exists in all paths: {prompt}-{sample_idx}.mp4. Skipping...")
                 continue
             try:
-                torch.cuda.empty_cache()
-                config["set_attnprocessor_fn"](pipe, **config["attnprocessor_kwargs"])
-                torch.manual_seed(0)
-                np.random.seed(0)
-                random.seed(0)
-                frames = config["run_fn"](
-                    pipe,
-                    prompt,
-                    **config["run_fn_kwargs"],
-                )
-                for filepath in filepaths:
-                    export_to_video(frames, filepath, fps=config["fps"])
-                    
+                print('running on localrank: ', local_rank)
+                actual_command = [
+                    "/home/sdurvasula/miniconda3/envs/spartan/bin/python", 
+                    "t2v_wan21.py",
+                    "--prompt", f"{prompt}",
+                    "--filepath", f"{filepaths[0]}",
+                ]
+                try:
+                    result = subprocess.run(
+                        actual_command, 
+                        check=True,        # Raise an exception if the command returns a non-zero exit code
+                        capture_output=True,
+                        text=True,          # Decode stdout/stderr as text
+                        env=child_env,
+                    )
+                    print("--- Subprocess STDOUT ---")
+                    print(result.stdout)
+                    print("--- Subprocess STDERR ---")
+                    print(result.stderr)
+                    print(f"Subprocess finished successfully for Array Task {prompt_idx}.")
+                    for filepath in filepaths[1:]:
+                        # copy
+                        os.system(f"cp {filepaths[0]} {filepath}")
+
+                except FileNotFoundError:
+                    print(f"Error: The command '{actual_command[0]}' was not found.", file=sys.stderr)
+                except subprocess.CalledProcessError as e:
+                    print(f"Error: Subprocess for Array Task {prompt_idx} failed with exit code {e.returncode}", file=sys.stderr)
+                    print("--- Subprocess STDOUT ---")
+                    print(e.stdout)
+                    print("--- Subprocess STDERR ---")
+                    print(e.stderr)
+
                 print(f"Rank {rank}, host {host}: Saved sample {sample_idx} for prompt in {len(dimensions)} dimension(s)")
-                
+
             except Exception as e:
                 print(f"Rank {rank}, host {host}: Error generating sample {sample_idx} for prompt '{prompt[:50]}...': {e}")
                 torch.cuda.empty_cache()
+
+
 
 
     print(f"Rank {rank}: Finished generating all videos")
@@ -170,44 +197,12 @@ def run(config):
 
 
 if __name__ == '__main__':
-    # run(distributedrunconfig.get_wan21_1_3b_480x832x81_baseline_config())
-    # run(distributedrunconfig.get_wan21_1_3b_720x1280x81_baseline_config())
-    # run(distributedrunconfig.get_wan21_14b_480x832x81_baseline_config())
-    # run(distributedrunconfig.get_wan21_14b_720x1280x81_baseline_config())
-    # run(distributedrunconfig.get_cogvideox_480x720x49_baseline_config())
-    # run(distributedrunconfig.get_cogvideox1_5_768x1360x81_baseline_config())
-    # run(distributedrunconfig.get_hunyuan_720x1280x81_baseline_config())
-
-    # run(distributedrunconfig.get_wan21_1_3b_480x832x81_cached_config())
-    # run(distributedrunconfig.get_wan21_1_3b_480x832x81_bitmaskcached_config())
-    # run(distributedrunconfig.get_wan21_14b_720x1280x81_bitmaskcached_config())
-
-
-
-    import sys
-    if sys.argv[1] == '0':
-        run(distributedrunconfig.get_wan21_1_3b_480x832x81_baseline_config())
-    
-    if sys.argv[1] == '1':
-        run(distributedrunconfig.get_wan21_1_3b_480x832x81_cached_config())
-
-    if sys.argv[1] == '2':
-        run(distributedrunconfig.get_wan21_1_3b_720x1280x81_baseline_config())
-
-    if sys.argv[1] == '3':
-        run(distributedrunconfig.get_wan21_1_3b_720x1280x81_bitmaskcached_config())
-
-    if sys.argv[1] == '4':
-        run(distributedrunconfig.get_wan21_14b_480x832x81_baseline_config())
-
-    if sys.argv[1] == '5':
-        run(distributedrunconfig.get_wan21_14b_480x832x81_bitmaskcached_config())
-
-    if sys.argv[1] == '6':
-        run(distributedrunconfig.get_wan21_14b_720x1280x81_baseline_config())
-
-    if sys.argv[1] == '7':
-        run(distributedrunconfig.get_wan21_14b_720x1280x81_bitmaskcached_config())
-
-    if sys.argv[1] == '8':
-        run(distributedrunconfig.get_hunyuan_720x1280x81_baseline_config())
+    import distributedrunconfig
+    # config_ = distributedrunconfig.get_hunyuan_720x1280x81_baseline_config()
+    config_ = distributedrunconfig.get_wan21_14b_720x1280x81_bitmaskcached_config()
+    config = {
+        "num_samples": config_["num_samples"],
+        "model_name": config_["model_name"],
+        "generated_vids_dir": config_["generated_vids_dir"],
+    }
+    run(config)

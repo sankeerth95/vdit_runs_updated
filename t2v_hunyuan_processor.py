@@ -6,12 +6,21 @@ import diffusers.models.transformers
 import typing
 import spattn.sparseattn_functionals
 import spattn.mask_utils
-
+import time
 
 mask_utils = spattn.mask_utils
 sparseattn_functionals = spattn.sparseattn_functionals
 HunyuanVideoAttnProcessor2_0 = diffusers.models.transformers.transformer_hunyuan_video.HunyuanVideoAttnProcessor2_0
 
+def benchmark_and_run_attn(attn_fn, *args, **kwargs):
+    torch.cuda.synchronize()
+    t0 = time.time()
+    N = 20
+    for i in range(N):
+        hidden_states = attn_fn(*args, **kwargs)
+    torch.cuda.synchronize()
+    t1 = time.time()
+    print('time = ', (t1-t0)/N, 's')
 
 class CustomProcessor(HunyuanVideoAttnProcessor2_0):
     def __init__(self, *args, **kwargs):
@@ -115,10 +124,46 @@ class CustomProcessor(HunyuanVideoAttnProcessor2_0):
             value = torch.cat([value, encoder_value], dim=2)
 
         # 5. Attention
-        hidden_states = F.scaled_dot_product_attention(
-            query, key, value, attn_mask=attention_mask, dropout_p=0.0, is_causal=False
-        )
-        # hidden_states = self.attn_fn(query, key, value, self.current_layer, self.ditrun, **self.processor_kwargs)
+        # print("current layer = ", self.current_layer)
+        # print("dtype = ", query.dtype, key.dtype, value.dtype)
+        # print("shape = ", query.shape, key.shape, value.shape)
+        # assert(query.dtype == torch.bfloat16)
+        # assert(key.dtype == torch.bfloat16)
+        # assert(value.dtype == torch.bfloat16)
+        # assert query.shape[0] == key.shape[0] == value.shape[0] == 1
+        # assert query.shape[1] == key.shape[1] == value.shape[1] == 24
+        # assert query.shape[2] == key.shape[2] == value.shape[2] == 75856
+        # assert query.shape[3] == key.shape[3] == value.shape[3] == 128
+
+        # torch.cuda.synchronize()
+        # print("start")
+        # attention_mask[:,:,:,-300:] = True
+        # hidden_states2 = F.scaled_dot_product_attention(
+            # query, key, value, attn_mask=attention_mask, dropout_p=0.0, is_causal=False
+        # ) # attention mask is nonzero here
+        hidden_states = self.attn_fn(query, key, value, self.current_layer, self.ditrun, **self.processor_kwargs)
+        # if self.ditrun %13 == 1:
+        #     benchmark_and_run_attn(self.attn_fn, query, key, value, self.current_layer, self.ditrun, **self.processor_kwargs)
+        #     torch.cuda.synchronize()
+        #     t0 = time.time()
+        #     N = 20
+        #     for i in range(N):
+        #         hidden_states = F.scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False)
+        #     torch.cuda.synchronize()
+        #     t1 = time.time()
+        #     print('time = ', (t1-t0)/N, 's')
+
+
+
+        # torch.cuda.synchronize()
+        # print("done, maxdiff = ", (hidden_states-hidden_states2).abs().max())
+        # print((attention_mask[0,0,0,-300:]==False).sum()) # 245
+        # print((attention_mask==False).sum()) # 245
+
+        if self.current_layer == self.num_layers-1:
+            self.ditrun += 1
+        self.current_layer = (self.current_layer + 1) % self.num_layers
+
 
         hidden_states = hidden_states.transpose(1, 2).flatten(2, 3)
         hidden_states = hidden_states.to(query.dtype)

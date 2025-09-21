@@ -2,7 +2,7 @@ import accelerate  # pylint: disable=unused-import
 import diffusers  # pylint: disable=unused-import
 import torch
 import torch.nn.functional as F
-import transformers  # pylint: disable=unused-import
+# import transformers  # pylint: disable=unused-import
 import t2v_cogvideox_processor
 import numpy as np
 import random
@@ -78,11 +78,14 @@ if __name__ == '__main__':
   # prompt = "A beautiful coastal beach in spring, waves lapping on sand by Vincent van Gogh"
   # prompt = "An oil painting of a couple in formal evening wear going home get caught in a heavy downpour with umbrellas"
   # config = distributedrunconfig.get_cogvideox_480x720x49_baseline_config()
+
   config = distributedrunconfig.get_cogvideox1_5_768x1360x81_baseline_config()
+  # config = distributedrunconfig.get_cogvideox_480x720x49_baseline_config()
+  # config = distributedrunconfig.get_cogvideox_480x720x49_cached_config()
 
   pipe = config['init_fn'](**config["init_fn_kwargs"])
+  pipe.to('cuda')
   config["set_attnprocessor_fn"](pipe, **config["attnprocessor_kwargs"])
-
   frames = config["run_fn"](
     pipe,
     prompt,
