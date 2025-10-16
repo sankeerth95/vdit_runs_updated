@@ -121,6 +121,20 @@ def get_wan21_1_3b_480x832x81_topk_config():
     return config
 
 
+def get_wan21_1_3b_480x832x81_topcdf_config():
+    config = get_wan21_1_3b_480x832x81_baseline_config()
+    config["model_name"] = "wan21_1.3b_480x832x81_topcdf"
+    config["attnprocessor_kwargs"] = {
+            "processor": "topcdf",
+            "num_layers": 30,
+            "tau": 0.90,
+            "gamma_q": 0.6,
+            "gamma_k": 0.6,
+            "blocksz": 128,
+        }
+    return config
+
+
 def get_wan21_1_3b_720x1280x81_baseline_config():
     return {
         "model_name": "wan21_1.3b_720x1280x81_baseline",
@@ -178,6 +192,20 @@ def get_wan21_1_3b_720x1280x81_bitmaskcached_config():
         },
         "fps": 16,
     }
+
+
+def get_wan21_1_3b_720x1280x81_topcdf_config():
+    config = get_wan21_1_3b_720x1280x81_baseline_config()
+    config["model_name"] = "wan21_1.3b_720x1280x81_topcdf"
+    config["attnprocessor_kwargs"] = {
+            "processor": "topcdf",
+            "num_layers": 30,
+            "tau": 0.90,
+            "gamma_q": 0.6,
+            "gamma_k": 0.6,
+            "blocksz": 128,
+        }
+    return config
 
 
 def get_wan21_14b_480x832x81_baseline_config():
@@ -238,6 +266,20 @@ def get_wan21_14b_480x832x81_bitmaskcached_config():
         },
         "fps": 16,
     }
+
+
+def get_wan21_14b_480x832x81_topcdf_config():
+    config = get_wan21_14b_480x832x81_baseline_config()
+    config["model_name"] = "wan21_14b_480x832x81_topcdf"
+    config["attnprocessor_kwargs"] = {
+            "processor": "topcdf",
+            "num_layers": 40,
+            "tau": 0.90,
+            "gamma_q": 0.6,
+            "gamma_k": 0.6,
+            "blocksz": 128,
+        }
+    return config
 
 
 
@@ -322,6 +364,20 @@ def get_wan21_14b_720x1280x81_2x_config():
         },
         "fps": 16,
     }
+
+def get_wan21_14b_720x1280x81_topcdf_config():
+    config = get_wan21_14b_720x1280x81_baseline_config()
+    config["model_name"] = "wan21_14b_720x1280x81_topcdf"
+    config["attnprocessor_kwargs"] = {
+            "processor": "topcdf",
+            "num_layers": 40,
+            "tau": 0.90,
+            "gamma_q": 0.6,
+            "gamma_k": 0.6,
+            "blocksz": 128,
+        }
+    return config
+
 
 def get_wan21_14b_720x1280x81_bitmaskcached_config():
     return {

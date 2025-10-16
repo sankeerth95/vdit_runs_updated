@@ -50,6 +50,8 @@ class MyCustomProcessor(WanAttnProcessor):
 
         elif kwargs["processor"] == "topk":
             self.attn_fn = sparseattn_functionals.attn_computed_with_sparse_mask_cuda
+        elif kwargs["processor"] == "topcdf":
+            self.attn_fn = sparseattn_functionals.attn_topcdf_cuda
         elif kwargs["processor"] == "lsh":
             raise NotImplementedError("LSH not implemented yet")
         elif kwargs["processor"] == "2x":
