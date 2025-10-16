@@ -127,9 +127,9 @@ def get_wan21_1_3b_480x832x81_topcdf_config():
     config["attnprocessor_kwargs"] = {
             "processor": "topcdf",
             "num_layers": 30,
-            "tau": 0.90,
-            "gamma_q": 0.6,
-            "gamma_k": 0.6,
+            "tau": 0.97,
+            "gamma_q": 0.4,
+            "gamma_k": 0.4,
             "blocksz": 128,
         }
     return config
