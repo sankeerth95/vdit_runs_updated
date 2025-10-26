@@ -122,15 +122,35 @@ def get_wan21_1_3b_480x832x81_topk_config():
 
 
 def get_wan21_1_3b_480x832x81_topcdf_config():
+    import torch
     config = get_wan21_1_3b_480x832x81_baseline_config()
     config["model_name"] = "wan21_1.3b_480x832x81_topcdf"
+
+    # Layer 0 thresholds (12 heads)
+    layer0_is_sparse = [True, True, False, False, True, True, True, True, False, False, True, True]
+    layer0_cdf = [0.8633, 0.9416, 1.0000, 1.0000, 0.9609, 0.9292, 0.8282, 0.8985, 1.0000, 1.0000, 0.9530, 0.9846]
+    layer0_sim1 = [-0.9375, -0.9375, 1.0000, 1.0000, -0.9375, -0.9375, -0.9375, -0.9375, 1.0000, 1.0000, -0.9375, -0.9375]
+    layer0_sim2 = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+    # Layer 1 thresholds (is_sparse only provided)
+    layer1_is_sparse = [True, True, True, True, True, True, True, True, True, True, False, True]
+
+    # Build per-layer tables: fill missing layers by repeating layer 0 vectors
+    L = 30  # number of layers for WAN 1.3B
+    is_sparse_table = [layer0_is_sparse, layer1_is_sparse] + [layer0_is_sparse] * (L - 2)
+    cdf_table = [layer0_cdf] + [layer0_cdf] * (L - 1)
+    sim1_table = [layer0_sim1] + [layer0_sim1] * (L - 1)
+    sim2_table = [layer0_sim2] + [layer0_sim2] * (L - 1)
+
     config["attnprocessor_kwargs"] = {
             "processor": "topcdf",
-            "num_layers": 30,
-            "tau": 0.97,
-            "gamma_q": 0.4,
-            "gamma_k": 0.4,
+            "num_layers": L,
             "blocksz": 128,
+            # Per-layer, per-head thresholds (shape: [L, 12])
+            "is_sparse": torch.tensor(is_sparse_table, dtype=torch.bool),
+            "cdfthreshd": torch.tensor(cdf_table, dtype=torch.float32),
+            "simthreshd1": torch.tensor(sim1_table, dtype=torch.float32),
+            "simthreshd2": torch.tensor(sim2_table, dtype=torch.float32),
         }
     return config
 
