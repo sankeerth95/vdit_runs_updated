@@ -6,6 +6,7 @@ import typing
 import spattn.sparseattn_functionals
 import spattn.mask_utils
 import time
+import sdpa_topcdf_mask
 
 mask_utils = spattn.mask_utils
 sparseattn_functionals = spattn.sparseattn_functionals
@@ -20,6 +21,40 @@ def benchmark_and_run_attn(attn_fn, *args, **kwargs):
     torch.cuda.synchronize()
     t1 = time.time()
     print('time = ', (t1-t0)/N, 's')
+
+
+def sdpa_topcdf_attn(query, key, value, current_layer, ditrun, **kwargs):
+    """Scaled-Dot-Product Attention with a 16-token Top-CDF mask injected via attn_mask.
+
+    Accepts per-layer/per-head threshold tables in kwargs (same keys as sparse version):
+      - is_sparse (ignored here)
+      - cdfthreshd (tau), simthreshd1 (gamma_q), simthreshd2 (gamma_k)
+    """
+    heads = query.shape[1]
+
+    def pick_table(name: str, default: float, reshape: str):
+        table = kwargs.get(name, None)
+        if table is None:
+            t = torch.full((1, heads), float(default), device=query.device, dtype=torch.float32)
+        else:
+            t = torch.as_tensor(table, device=query.device, dtype=torch.float32)
+            if t.ndim == 2:  # [L,H]
+                t = t[current_layer]
+            # now [H]
+            if t.ndim == 1:
+                t = t.unsqueeze(0)  # [1,H]
+        if reshape == "4d":
+            return t.view(1, heads, 1, 1)  # broadcast over [B,H,n_q,1]
+        if reshape == "3d":
+            return t.view(1, heads, 1)     # broadcast over [B,H,n_*]
+        return t
+
+    tau = pick_table("cdfthreshd", kwargs.get("tau", 0.90), reshape="4d")
+    gamma_q = pick_table("simthreshd1", kwargs.get("gamma_q", 0.60), reshape="3d")
+    gamma_k = pick_table("simthreshd2", kwargs.get("gamma_k", 0.60), reshape="3d")
+
+    blocksz = kwargs.get("blocksz", 16)
+    return sdpa_topcdf_mask.sdpa_with_topcdf_mask(query, key, value, blocksz=blocksz, tau=tau, gamma_q=gamma_q, gamma_k=gamma_k)
 
 
 class MyCustomProcessor(WanAttnProcessor):
@@ -52,6 +87,11 @@ class MyCustomProcessor(WanAttnProcessor):
             self.attn_fn = sparseattn_functionals.attn_computed_with_sparse_mask_cuda
         elif kwargs["processor"] == "topcdf":
             self.attn_fn = sparseattn_functionals.attn_topcdf_cuda
+        elif kwargs["processor"] == "sdpa_topcdf16":
+            # Dense SDPA with 16-token Top-CDF mask injected via attn_mask (validation mode)
+            if "blocksz" not in self.processor_kwargs:
+                self.processor_kwargs["blocksz"] = 16
+            self.attn_fn = sdpa_topcdf_attn
         elif kwargs["processor"] == "lsh":
             raise NotImplementedError("LSH not implemented yet")
         elif kwargs["processor"] == "2x":
