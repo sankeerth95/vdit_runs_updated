@@ -1,4 +1,5 @@
 import math
+import os
 from typing import Tuple, Union
 
 import torch
@@ -150,6 +151,8 @@ def sdpa_with_topcdf_mask(
     tau: Union[float, torch.Tensor] = 0.9,
     gamma_q: Union[float, torch.Tensor] = 0.6,
     gamma_k: Union[float, torch.Tensor] = 0.6,
+    layer_idx: int | None = None,
+    log_flops: bool = False,
 ) -> torch.Tensor:
     """Run SDPA with a Top‑CDF 16×16 block mask injected via attn_mask.
 
@@ -157,20 +160,66 @@ def sdpa_with_topcdf_mask(
     """
     B, H, S, D = q.shape
     keep_tokens = build_topcdf_block_mask(q, k, blocksz, tau, gamma_q, gamma_k)
-    attn_mask = ~keep_tokens  # True = mask out
+    attn_mask = ~keep_tokens  # True = mask out, shape [B,H,S,S]
 
-    # SDPA expects [B*H, S, D], and attn_mask broadcastable to [B*H, S, S]
-    q_ = q.reshape(B * H, S, D)
-    k_ = k.reshape(B * H, S, D)
-    v_ = v.reshape(B * H, S, D)
-    mask_ = attn_mask.reshape(B * H, S, S)
+    # Use 3D chunked math-kernel path for mask support
+
+    # N = B*H, L = S
+    q3 = q.reshape(B * H, S, D)  # [N, L, E]
+    k3 = k.reshape(B * H, S, D)
+    v3 = v.reshape(B * H, S, D)
+    mask3d = attn_mask.reshape(B * H, S, S)  # [N, L, S]
+
+    # Chunked queries to reduce peak memory while preserving full K/V context
+    chunk = int(os.environ.get("SDPA_CHUNK", "1024"))
+    outputs = []
+
+    # Always use the masked math-kernel path to keep numerics consistent with mask injection,
+    # even when the mask is all-False (i.e., has no effect).
+    assert mask3d.dtype == torch.bool, f"attn_mask must be bool; got {mask3d.dtype}"
+    assert mask3d.device == q3.device, "attn_mask must be on same device as q"
+
+    # For FLOP estimate per head
+    kept_per_head_total = torch.zeros(H, dtype=torch.float64, device=q3.device) if log_flops else None
 
     with torch.backends.cuda.sdp_kernel(enable_flash=False, enable_mem_efficient=False, enable_math=True):
-        o_ = F.scaled_dot_product_attention(q_.transpose(0, 1), k_.transpose(0, 1), v_.transpose(0, 1), attn_mask=mask_)
-        # SDPA returns [S, B*H, D] when inputs are [S, B*H, D]
-        o_ = o_.transpose(0, 1)
+        for start in range(0, S, chunk):
+            end = min(start + chunk, S)
+            q_chunk = q3[:, start:end, :].contiguous()      # [N, W, E]
+            mask_chunk = mask3d[:, start:end, :].contiguous()  # [N, W, S]
 
-    return o_.reshape(B, H, S, D)
+            # Convert boolean mask -> additive bias (0 for keep, -inf for mask)
+            attn_bias = torch.zeros_like(mask_chunk, dtype=q_chunk.dtype)
+            attn_bias = attn_bias.masked_fill(mask_chunk, float("-inf"))
+
+            o_chunk = F.scaled_dot_product_attention(q_chunk, k3, v3, attn_mask=attn_bias, dropout_p=0.0, is_causal=False)  # [N, W, E]
+            outputs.append(o_chunk)
+
+            # Accumulate kept counts per head for FLOPs (kept = ~mask)
+            if log_flops:
+                kept_per_row = (~mask_chunk).sum(dim=-1).to(torch.float64)   # [N, W]
+                kept_per_head_step = kept_per_row.sum(dim=1)                 # [N]
+                kept_per_head_step = kept_per_head_step.view(B, H).sum(dim=0)  # [H]
+                kept_per_head_total += kept_per_head_step
+
+    o3 = torch.cat(outputs, dim=1)  # [N, L, E]
+
+    # Write FLOPs estimate if requested: per head and total
+    if log_flops:
+        try:
+            flops_per_head = (4.0 * float(D)) * kept_per_head_total.detach().cpu().numpy()
+            flops_total = float(flops_per_head.sum())
+            sparsity_per_head = (kept_per_head_total / (float(B) * float(S) * float(S))).detach().cpu().numpy()
+            path = os.environ.get("SDPA_FLOPS_PATH", "sdpa_flops.md")
+            with open(path, "a") as f:
+                f.write(f"layer={layer_idx if layer_idx is not None else -1} H={H} D={D} L={S} ")
+                f.write("sparsity_head=" + ",".join(f"{x:.6f}" for x in sparsity_per_head) + " ")
+                f.write("flops_head=" + ",".join(f"{int(x)}" for x in flops_per_head) + " ")
+                f.write(f"flops_total={int(flops_total)}\n")
+        except Exception:
+            pass
+
+    return o3.reshape(B, H, S, D)
 
 
 

@@ -189,6 +189,25 @@ def get_wan21_1_3b_480x832x81_sdpa_topcdf16_config():
     return config
 
 
+def get_wan21_1_3b_480x832x81_sdpa_topcdf16_global_config():
+    """Use SDPA Top-CDF with a single global threshold shared across heads.
+
+    This avoids per-head/per-layer threshold tables and instead passes
+    scalar tau/gamma values that broadcast equally to all heads.
+    """
+    config = get_wan21_1_3b_480x832x81_baseline_config()
+    config["model_name"] = "wan21_1.3b_480x832x81_sdpa_topcdf16_global"
+    config["attnprocessor_kwargs"] = {
+            "processor": "sdpa_topcdf16",
+            "num_layers": 30,
+            "blocksz": 16,
+            # Global thresholds (same for all heads and layers)
+            "tau": 0.95,
+            "gamma_q": 0.5,
+            "gamma_k": 0.5,
+        }
+    return config
+
 def get_wan21_1_3b_720x1280x81_baseline_config():
     return {
         "model_name": "wan21_1.3b_720x1280x81_baseline",
