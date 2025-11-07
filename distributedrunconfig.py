@@ -179,7 +179,7 @@ def get_wan21_1_3b_480x832x81_sdpa_topcdf16_config():
     config["attnprocessor_kwargs"] = {
             "processor": "sdpa_topcdf16",
             "num_layers": L,
-            "blocksz": 16,  # Use 16-token blocks for SDPA validation
+            "blocksz": 128,  # Use 16-token blocks for SDPA validation
             # Per-layer, per-head thresholds (shape: [L, 12])
             "is_sparse": torch.tensor(is_sparse_table, dtype=torch.bool),
             "cdfthreshd": torch.tensor(cdf_table, dtype=torch.float32),
@@ -201,6 +201,26 @@ def get_wan21_1_3b_480x832x81_sdpa_topcdf16_global_config():
             "processor": "sdpa_topcdf16",
             "num_layers": 30,
             "blocksz": 16,
+            # Global thresholds (same for all heads and layers)
+            "tau": 0.95,
+            "gamma_q": 0.5,
+            "gamma_k": 0.5,
+        }
+    return config
+
+
+def get_wan21_14b_480x832x81_sdpa_topcdf128_global_config():
+    """Use SDPA Top-CDF with a single global threshold shared across heads for 14B model.
+
+    This avoids per-head/per-layer threshold tables and instead passes
+    scalar tau/gamma values that broadcast equally to all heads.
+    """
+    config = get_wan21_14b_480x832x81_baseline_config()
+    config["model_name"] = "wan21_14b_480x832x81_sdpa_topcdf128_global"
+    config["attnprocessor_kwargs"] = {
+            "processor": "sdpa_topcdf16",
+            "num_layers": 40,
+            "blocksz": 128,
             # Global thresholds (same for all heads and layers)
             "tau": 0.95,
             "gamma_q": 0.5,

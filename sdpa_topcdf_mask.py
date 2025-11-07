@@ -72,8 +72,9 @@ def build_topcdf_block_mask(
     tau: Union[float, torch.Tensor] = 0.9,
     gamma_q: Union[float, torch.Tensor] = 0.6,
     gamma_k: Union[float, torch.Tensor] = 0.6,
-) -> torch.Tensor:
-    """Compute a 16×16 block Top‑CDF keep mask and expand to token level.
+    return_blocks_only: bool = False,
+) -> torch.Tensor | tuple[torch.Tensor, int]:
+    """Compute a 16×16 block Top‑CDF keep mask.
 
     Args:
         q, k: [B, H, S, D]
@@ -82,7 +83,10 @@ def build_topcdf_block_mask(
         gamma_q, gamma_k: self‑similarity thresholds (scalar or broadcastable to [1,H,1])
 
     Returns:
-        keep_tokens: boolean tensor [B, H, S, S]; True = keep (allowed attention)
+        If return_blocks_only is False (default):
+            keep_tokens: boolean tensor [B, H, S, S]; True = keep (allowed attention)
+        If return_blocks_only is True:
+            (keep_blocks, S): block-level mask [B, H, n_q, n_k] and sequence length S
     """
     assert q.shape == k.shape, "q and k must be same shape for self-attention"
     B, H, S, D = q.shape
@@ -137,6 +141,9 @@ def build_topcdf_block_mask(
     keep_blocks |= ~q_similar.unsqueeze(-1)
     keep_blocks |= ~k_similar.unsqueeze(-2)
 
+    if return_blocks_only:
+        return keep_blocks, S
+
     # Expand to token level: [B,H,S,S]
     keep_q = keep_blocks.repeat_interleave(blocksz, dim=2)[:, :, :S, :]  # [B,H,S,n_k]
     keep_tokens = keep_q.repeat_interleave(blocksz, dim=3)[:, :, :, :S]  # [B,H,S,S]
@@ -152,6 +159,7 @@ def sdpa_with_topcdf_mask(
     gamma_q: Union[float, torch.Tensor] = 0.6,
     gamma_k: Union[float, torch.Tensor] = 0.6,
     layer_idx: int | None = None,
+    iter_idx: int | None = None,
     log_flops: bool = False,
 ) -> torch.Tensor:
     """Run SDPA with a Top‑CDF 16×16 block mask injected via attn_mask.
@@ -159,25 +167,24 @@ def sdpa_with_topcdf_mask(
     Shapes: q,k,v are [B, H, S, D]. Returns o: [B, H, S, D].
     """
     B, H, S, D = q.shape
-    keep_tokens = build_topcdf_block_mask(q, k, blocksz, tau, gamma_q, gamma_k)
-    attn_mask = ~keep_tokens  # True = mask out, shape [B,H,S,S]
 
-    # Use 3D chunked math-kernel path for mask support
+    # Build only the block-level mask to avoid allocating full [S,S]
+    keep_blocks, S = build_topcdf_block_mask(
+        q, k, blocksz, tau, gamma_q, gamma_k, return_blocks_only=True
+    )
 
     # N = B*H, L = S
     q3 = q.reshape(B * H, S, D)  # [N, L, E]
     k3 = k.reshape(B * H, S, D)
     v3 = v.reshape(B * H, S, D)
-    mask3d = attn_mask.reshape(B * H, S, S)  # [N, L, S]
 
     # Chunked queries to reduce peak memory while preserving full K/V context
     chunk = int(os.environ.get("SDPA_CHUNK", "1024"))
     outputs = []
 
-    # Always use the masked math-kernel path to keep numerics consistent with mask injection,
-    # even when the mask is all-False (i.e., has no effect).
-    assert mask3d.dtype == torch.bool, f"attn_mask must be bool; got {mask3d.dtype}"
-    assert mask3d.device == q3.device, "attn_mask must be on same device as q"
+    # Always use the masked math-kernel path to keep numerics consistent with mask injection
+    assert keep_blocks.dtype == torch.bool, f"keep_blocks must be bool; got {keep_blocks.dtype}"
+    assert keep_blocks.device == q3.device, "keep_blocks must be on same device as q"
 
     # For FLOP estimate per head
     kept_per_head_total = torch.zeros(H, dtype=torch.float64, device=q3.device) if log_flops else None
@@ -185,14 +192,39 @@ def sdpa_with_topcdf_mask(
     with torch.backends.cuda.sdp_kernel(enable_flash=False, enable_mem_efficient=False, enable_math=True):
         for start in range(0, S, chunk):
             end = min(start + chunk, S)
-            q_chunk = q3[:, start:end, :].contiguous()      # [N, W, E]
-            mask_chunk = mask3d[:, start:end, :].contiguous()  # [N, W, S]
+            W = end - start
+            q_chunk = q3[:, start:end, :].contiguous()  # [N, W, E]
+
+            # Build [N, W, S] mask lazily for this chunk from block-level mask
+            token_idx = torch.arange(start, end, device=q3.device)
+            q_block_idx = (token_idx // blocksz).to(torch.long)
+
+            # Allocate per-chunk boolean mask [B,H,W,S]
+            mask_chunk_bhs = torch.empty(B, H, W, S, dtype=torch.bool, device=q3.device)
+
+            i = 0
+            while i < W:
+                qb = int(q_block_idx[i].item())
+                j = i + 1
+                while j < W and int(q_block_idx[j].item()) == qb:
+                    j += 1
+                rows = j - i
+
+                allowed_blocks = keep_blocks[:, :, qb, :]  # [B,H,n_k]
+                allowed_tokens = allowed_blocks.repeat_interleave(blocksz, dim=-1)[..., :S]  # [B,H,S]
+                mask_rows = ~allowed_tokens  # [B,H,S]
+                mask_chunk_bhs[:, :, i:j, :] = mask_rows.unsqueeze(2)  # [B,H,rows,S]
+                i = j
+
+            mask_chunk = mask_chunk_bhs.reshape(B * H, W, S)  # [N, W, S]
 
             # Convert boolean mask -> additive bias (0 for keep, -inf for mask)
             attn_bias = torch.zeros_like(mask_chunk, dtype=q_chunk.dtype)
             attn_bias = attn_bias.masked_fill(mask_chunk, float("-inf"))
 
-            o_chunk = F.scaled_dot_product_attention(q_chunk, k3, v3, attn_mask=attn_bias, dropout_p=0.0, is_causal=False)  # [N, W, E]
+            o_chunk = F.scaled_dot_product_attention(
+                q_chunk, k3, v3, attn_mask=attn_bias, dropout_p=0.0, is_causal=False
+            )  # [N, W, E]
             outputs.append(o_chunk)
 
             # Accumulate kept counts per head for FLOPs (kept = ~mask)
@@ -209,11 +241,22 @@ def sdpa_with_topcdf_mask(
         try:
             flops_per_head = (4.0 * float(D)) * kept_per_head_total.detach().cpu().numpy()
             flops_total = float(flops_per_head.sum())
-            sparsity_per_head = (kept_per_head_total / (float(B) * float(S) * float(S))).detach().cpu().numpy()
-            path = os.environ.get("SDPA_FLOPS_PATH", "sdpa_flops.md")
+            keep_ratio_per_head = (kept_per_head_total / (float(B) * float(S) * float(S))).detach().cpu().numpy()
+            # Default filename depends on block size unless overridden
+            default_path = f"sdpa_flops{blocksz}block.md"
+            path = os.environ.get("SDPA_FLOPS_PATH", default_path)
+            # Write header if file is new/empty
+            write_header = False
+            try:
+                write_header = (not os.path.exists(path)) or (os.path.getsize(path) == 0)
+            except Exception:
+                write_header = True
             with open(path, "a") as f:
+                if write_header:
+                    f.write(f"blocksz={blocksz}\n")
                 f.write(f"layer={layer_idx if layer_idx is not None else -1} H={H} D={D} L={S} ")
-                f.write("sparsity_head=" + ",".join(f"{x:.6f}" for x in sparsity_per_head) + " ")
+                f.write(f"iter={iter_idx if iter_idx is not None else -1} ")
+                f.write("keep_ratio_head=" + ",".join(f"{x:.6f}" for x in keep_ratio_per_head) + " ")
                 f.write("flops_head=" + ",".join(f"{int(x)}" for x in flops_per_head) + " ")
                 f.write(f"flops_total={int(flops_total)}\n")
         except Exception:

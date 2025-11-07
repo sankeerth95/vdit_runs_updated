@@ -56,7 +56,7 @@ def sdpa_topcdf_attn(query, key, value, current_layer, ditrun, **kwargs):
 
     blocksz = kwargs.get("blocksz", 16)
     log_flops = os.environ.get("SDPA_LOG_FLOPS", "1").lower() in {"1", "true", "yes"}
-    return sdpa_topcdf_mask.sdpa_with_topcdf_mask(query, key, value, blocksz=blocksz, tau=tau, gamma_q=gamma_q, gamma_k=gamma_k, layer_idx=current_layer, log_flops=log_flops)
+    return sdpa_topcdf_mask.sdpa_with_topcdf_mask(query, key, value, blocksz=blocksz, tau=tau, gamma_q=gamma_q, gamma_k=gamma_k, layer_idx=current_layer, iter_idx=ditrun, log_flops=log_flops)
 
 
 class MyCustomProcessor(WanAttnProcessor):
