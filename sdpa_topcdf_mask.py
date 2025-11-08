@@ -73,7 +73,9 @@ def build_topcdf_block_mask(
     gamma_q: Union[float, torch.Tensor] = 0.6,
     gamma_k: Union[float, torch.Tensor] = 0.6,
     return_blocks_only: bool = False,
-) -> torch.Tensor | tuple[torch.Tensor, int]:
+    layer_idx: int | None = None,
+    iter_idx: int | None = None,
+) -> torch.Tensor | tuple[torch.Tensor, int] | tuple[torch.Tensor, int, torch.Tensor]:
     """Compute a 16×16 block Top‑CDF keep mask.
 
     Args:
@@ -117,16 +119,30 @@ def build_topcdf_block_mask(
     logits = logits.masked_fill(~q_similar.unsqueeze(-1), neg_inf)
     logits = logits.masked_fill(~k_similar.unsqueeze(-2), neg_inf)
 
+
+
     P = torch.softmax(logits, dim=-1)
     P = torch.nan_to_num(P, nan=0.0)
+    # Renormalize after nan_to_num to ensure row sums = 1.0
+    row_sum_before_norm = P.sum(dim=-1, keepdim=True)
+    # Only renormalize rows that have non-zero sum
+    P = torch.where(
+        row_sum_before_norm > 1e-8,
+        P / row_sum_before_norm,
+        P  # Keep as-is if row sum is too small (all zeros)
+    )
 
     P_sorted, sorted_idx = torch.sort(P, dim=-1, descending=True)
-    cumsum = torch.cumsum(P_sorted, dim=-1)
+    # Compute cumsum in float32 for better precision (bfloat16 accumulates errors)
+    cumsum = torch.cumsum(P_sorted.float(), dim=-1).to(P.dtype)
 
     if not torch.is_tensor(tau):
         tau = torch.tensor(float(tau), device=device, dtype=P.dtype)
     tau = tau.to(device=device, dtype=P.dtype)
-    thresh = tau * P.sum(dim=-1, keepdim=True)
+    # Threshold is tau * (actual row sum), not tau * 1.0
+    # This way if row_sum < 1.0 due to masking, we keep tau fraction of available mass
+    row_sum = P.sum(dim=-1, keepdim=True)  # [B,H,n_q,1]
+    thresh = tau * row_sum
 
     keep_sorted = (cumsum < thresh)
     cross = (cumsum >= thresh)
@@ -137,12 +153,15 @@ def build_topcdf_block_mask(
     keep_blocks = torch.zeros_like(P, dtype=torch.bool)
     keep_blocks.scatter_(-1, sorted_idx, keep_sorted)
 
+    # Preserve a copy before force-keep for logging
+    keep_blocks_pre_or = keep_blocks.clone()
+
     # Force keep whole rows/cols for non‑self‑similar blocks
     keep_blocks |= ~q_similar.unsqueeze(-1)
     keep_blocks |= ~k_similar.unsqueeze(-2)
 
     if return_blocks_only:
-        return keep_blocks, S
+        return keep_blocks, S, keep_blocks_pre_or
 
     # Expand to token level: [B,H,S,S]
     keep_q = keep_blocks.repeat_interleave(blocksz, dim=2)[:, :, :S, :]  # [B,H,S,n_k]
@@ -169,8 +188,9 @@ def sdpa_with_topcdf_mask(
     B, H, S, D = q.shape
 
     # Build only the block-level mask to avoid allocating full [S,S]
-    keep_blocks, S = build_topcdf_block_mask(
-        q, k, blocksz, tau, gamma_q, gamma_k, return_blocks_only=True
+    keep_blocks, S, keep_blocks_pre = build_topcdf_block_mask(
+        q, k, blocksz, tau, gamma_q, gamma_k, return_blocks_only=True,
+        layer_idx=layer_idx, iter_idx=iter_idx
     )
 
     # N = B*H, L = S
@@ -242,6 +262,11 @@ def sdpa_with_topcdf_mask(
             flops_per_head = (4.0 * float(D)) * kept_per_head_total.detach().cpu().numpy()
             flops_total = float(flops_per_head.sum())
             keep_ratio_per_head = (kept_per_head_total / (float(B) * float(S) * float(S))).detach().cpu().numpy()
+            # Block-level keep ratio per head BEFORE force-keep OR (Top-CDF only)
+            try:
+                block_keep_ratio_head_pre = keep_blocks_pre.float().mean(dim=(0, 2, 3)).detach().cpu().numpy()
+            except Exception:
+                block_keep_ratio_head_pre = None
             # Default filename depends on block size unless overridden
             default_path = f"sdpa_flops{blocksz}block.md"
             path = os.environ.get("SDPA_FLOPS_PATH", default_path)
@@ -257,6 +282,8 @@ def sdpa_with_topcdf_mask(
                 f.write(f"layer={layer_idx if layer_idx is not None else -1} H={H} D={D} L={S} ")
                 f.write(f"iter={iter_idx if iter_idx is not None else -1} ")
                 f.write("keep_ratio_head=" + ",".join(f"{x:.6f}" for x in keep_ratio_per_head) + " ")
+                if block_keep_ratio_head_pre is not None:
+                    f.write("block_keep_ratio_head_pre=" + ",".join(f"{x:.6f}" for x in block_keep_ratio_head_pre) + " ")
                 f.write("flops_head=" + ",".join(f"{int(x)}" for x in flops_per_head) + " ")
                 f.write(f"flops_total={int(flops_total)}\n")
         except Exception:
