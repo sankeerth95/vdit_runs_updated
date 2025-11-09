@@ -116,20 +116,19 @@ def build_naive_cache_block_mask(
     del logits_full
     
     # Build block-level keep mask by scanning patches
-    keep_blocks = torch.zeros((B, H, n_q, n_k), dtype=torch.bool, device=device)
-    for qi in range(n_q):
-        q_start = qi * blocksz
-        q_end = min(q_start + blocksz, S)
-        for kj in range(n_k):
-            k_start = kj * blocksz
-            k_end = min(k_start + blocksz, S)
-            # Patch: [B, H, q_len, k_len]
-            P_patch = P[:, :, q_start:q_end, k_start:k_end]
-            # Column-wise max over query tokens in the patch → [B, H, k_len]
-            col_max = P_patch.max(dim=2, keepdim=False)[0]
-            # Decide keep for this (qi, kj) if any key token exceeds threshold
-            keep_ij = (col_max > thresh).any(dim=-1)  # [B, H]
-            keep_blocks[:, :, qi, kj] = keep_ij
+    # Vectorized: pad to full blocks, reshape, then reduce over block dims
+    S_padded = n_q * blocksz
+    if S_padded != S:
+        P_padded = F.pad(P, (0, S_padded - S, 0, S_padded - S), value=0.0)
+    else:
+        P_padded = P
+    # [B,H,S_pad,S_pad] -> [B,H,n_q,blocksz,n_k,blocksz]
+    P_blocks = P_padded.view(B, H, n_q, blocksz, n_k, blocksz)
+    # Column-wise max over query tokens within each (qi,kj) patch
+    # max over the query-token axis inside the query block (dim=3)
+    col_max_in_patch = P_blocks.max(dim=3).values  # [B,H,n_q,n_k,blocksz]
+    # If ANY key token in the key block exceeds threshold → keep (qi,kj)
+    keep_blocks = (col_max_in_patch > thresh).any(dim=-1)  # [B,H,n_q,n_k]
     
     if return_blocks_only:
         return keep_blocks, S
@@ -163,7 +162,7 @@ def sdpa_with_naive_cache_mask(
     
     if compute_mask:
         # Build block-level mask
-        print(f"[NaiveCache] Computing mask for layer={layer_idx}, iter={iter_idx}")
+        # print(f"[NaiveCache] Computing mask for layer={layer_idx}, iter={iter_idx}")
         keep_blocks, S = build_naive_cache_block_mask(
             q, k, blocksz, thresh, return_blocks_only=True,
             layer_idx=layer_idx, iter_idx=iter_idx
@@ -172,10 +171,10 @@ def sdpa_with_naive_cache_mask(
         # Cache it if caching is enabled
         if use_cache:
             mask_cache.update_cache(layer_idx, keep_blocks)
-            print(f"[NaiveCache] Cached mask for layer={layer_idx}")
+            # print(f"[NaiveCache] Cached mask for layer={layer_idx}")
     else:
         # Use cached mask
-        print(f"[NaiveCache] Using cached mask for layer={layer_idx}, iter={iter_idx}")
+        # print(f"[NaiveCache] Using cached mask for layer={layer_idx}, iter={iter_idx}")
         keep_blocks = mask_cache.get_mask(layer_idx)
         if keep_blocks is None:
             raise RuntimeError(f"No cached mask found for layer {layer_idx}")
