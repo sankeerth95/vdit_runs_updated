@@ -8,6 +8,7 @@ import spattn.mask_utils
 import time
 import os
 import sdpa_topcdf_mask
+import sdpa_naive_cache
 
 mask_utils = spattn.mask_utils
 sparseattn_functionals = spattn.sparseattn_functionals
@@ -59,6 +60,27 @@ def sdpa_topcdf_attn(query, key, value, current_layer, ditrun, **kwargs):
     return sdpa_topcdf_mask.sdpa_with_topcdf_mask(query, key, value, blocksz=blocksz, tau=tau, gamma_q=gamma_q, gamma_k=gamma_k, layer_idx=current_layer, iter_idx=ditrun, log_flops=log_flops)
 
 
+def sdpa_naive_cache_attn(query, key, value, current_layer, ditrun, **kwargs):
+    """Scaled-Dot-Product Attention with naive cache mask (threshold-based, column-wise max).
+    
+    Pure PyTorch implementation, no CUDA dependencies.
+    """
+    blocksz = kwargs.get("blocksz", 16)
+    thresh = kwargs.get("thresh", 0.001)
+    mask_cache = kwargs.get("mask_cache", None)
+    log_flops = os.environ.get("SDPA_LOG_FLOPS", "1").lower() in {"1", "true", "yes"}
+    
+    return sdpa_naive_cache.sdpa_with_naive_cache_mask(
+        query, key, value, 
+        blocksz=blocksz, 
+        thresh=thresh,
+        layer_idx=current_layer, 
+        iter_idx=ditrun, 
+        log_flops=log_flops,
+        mask_cache=mask_cache
+    )
+
+
 class MyCustomProcessor(WanAttnProcessor):
     def __init__(self, *args, **kwargs):
         super().__init__()
@@ -94,6 +116,14 @@ class MyCustomProcessor(WanAttnProcessor):
             if "blocksz" not in self.processor_kwargs:
                 self.processor_kwargs["blocksz"] = 16
             self.attn_fn = sdpa_topcdf_attn
+        elif kwargs["processor"] == "sdpa_cached":
+            # Dense SDPA with naive cache mask (threshold-based, pure PyTorch)
+            if "blocksz" not in self.processor_kwargs:
+                self.processor_kwargs["blocksz"] = 16
+            # Initialize cache
+            compute_cache_at = kwargs.get("compute_cache_at", [0])
+            self.processor_kwargs["mask_cache"] = sdpa_naive_cache.NaiveMaskCache(compute_cache_at)
+            self.attn_fn = sdpa_naive_cache_attn
         elif kwargs["processor"] == "lsh":
             raise NotImplementedError("LSH not implemented yet")
         elif kwargs["processor"] == "2x":

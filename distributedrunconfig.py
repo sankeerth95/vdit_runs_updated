@@ -209,6 +209,25 @@ def get_wan21_1_3b_480x832x81_sdpa_topcdf16_global_config():
     return config
 
 
+def get_wan21_1_3b_480x832x81_sdpa_cached_config():
+    """Use SDPA with naive cache mask (threshold-based, pure PyTorch).
+    
+    This is a pure PyTorch implementation that doesn't rely on CUDA kernels,
+    enabling flexible block sizes like 16. Uses column-wise max + threshold
+    for conservative mask generation (OR logic across queries).
+    """
+    config = get_wan21_1_3b_480x832x81_baseline_config()
+    config["model_name"] = "wan21_1.3b_480x832x81_sdpa_cached"
+    config["attnprocessor_kwargs"] = {
+            "processor": "sdpa_cached",
+            "num_layers": 30,
+            "blocksz": 16,
+            "thresh": 0.5/32670,  # Same threshold as CUDA cached version
+            "compute_cache_at": [0],  # Compute mask only at first iteration
+        }
+    return config
+
+
 def get_wan21_14b_480x832x81_sdpa_topcdf128_global_config():
     """Use SDPA Top-CDF with a single global threshold shared across heads for 14B model.
 

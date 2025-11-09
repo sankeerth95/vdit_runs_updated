@@ -94,7 +94,10 @@ if __name__ == '__main__':
   # config = distributedrunconfig.get_wan21_1_3b_720x1280x81_baseline_config()
   # config = distributedrunconfig.get_wan21_1_3b_480x832x81_baseline_config()
   # config = distributedrunconfig.get_wan21_1_3b_480x832x81_sdpa_topcdf16_global_config()
-  config = distributedrunconfig.get_wan21_1_3b_480x832x81_sdpa_topcdf16_config()
+  # config = distributedrunconfig.get_wan21_1_3b_480x832x81_sdpa_topcdf16_config()
+  config = distributedrunconfig.get_wan21_1_3b_480x832x81_sdpa_cached_config()
+  # config = distributedrunconfig.get_wan21_14b_480x832x81_sdpa_topcdf128_global_config()
+  
   # config = distributedrunconfig.get_wan21_1_3b_720x1280x81_topcdf_config()
   # config = distributedrunconfig.get_wan21_14b_480x832x81_topcdf_config()
   # config = distributedrunconfig.get_wan21_14b_720x1280x81_topcdf_config()
@@ -121,8 +124,11 @@ if __name__ == '__main__':
     output_dir_base.mkdir(parents=True, exist_ok=True)
 
   pipe = config['init_fn'](**config["init_fn_kwargs"])
-  pipe.to('cuda')
+  # Offload all large components to CPU to avoid GPU OOM for 14B,
+  # but keep the VAE on GPU and unchanged (float32 as loaded above).
   pipe.enable_model_cpu_offload()
+  if hasattr(pipe, 'vae'):
+    pipe.vae.to('cuda', dtype=torch.float32)
   # pipe.transformer.compile(mode='reduce-overhead', dynamic=True)
   config["set_attnprocessor_fn"](pipe, **config["attnprocessor_kwargs"])
   # torch.manual_seed(0)
