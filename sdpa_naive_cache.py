@@ -42,34 +42,6 @@ class NaiveMaskCache:
         self.cache[layer_idx] = mask
 
 
-def _blockmean(x: torch.Tensor, blocksz: int) -> torch.Tensor:
-    """Mean-pooled block representatives over the sequence dimension.
-    
-    Args:
-        x: [B, H, S, D]
-        blocksz: block size
-    Returns:
-        [B, H, n_blocks, D]
-    """
-    B, H, S, D = x.shape
-    device, dtype = x.device, x.dtype
-    
-    full = S // blocksz
-    if full > 0:
-        x_prefix = x[:, :, :full * blocksz, :].contiguous()
-        mean_full = x_prefix.view(B, H, full, blocksz, D).mean(dim=3)
-    else:
-        mean_full = torch.empty(B, H, 0, D, device=device, dtype=dtype)
-    
-    rem = S % blocksz
-    if rem > 0:
-        mean_tail = x[:, :, full * blocksz:, :].mean(dim=2, keepdim=True)
-    else:
-        mean_tail = torch.empty(B, H, 0, D, device=device, dtype=dtype)
-    
-    return torch.cat((mean_full, mean_tail), dim=2)
-
-
 def build_naive_cache_block_mask(
     q: torch.Tensor,
     k: torch.Tensor,
