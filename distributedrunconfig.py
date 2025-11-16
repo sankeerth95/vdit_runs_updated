@@ -104,7 +104,7 @@ def get_wan21_1_3b_480x832x81_cached_config():
             "blocksz": 128,
             "compute_cache_at": [0, 15, 30, 45, 60, 80],
             "compress": False,
-            "offload": False,
+            "offload": True,
         }
     return config
 
@@ -185,6 +185,7 @@ def get_wan21_1_3b_480x832x81_sdpa_topcdf16_config():
             "cdfthreshd": torch.tensor(cdf_table, dtype=torch.float32),
             "simthreshd1": torch.tensor(sim1_table, dtype=torch.float32),
             "simthreshd2": torch.tensor(sim2_table, dtype=torch.float32),
+            "model_name": "wan_1_3b_480",
         }
     return config
 
@@ -200,11 +201,12 @@ def get_wan21_1_3b_480x832x81_sdpa_topcdf16_global_config():
     config["attnprocessor_kwargs"] = {
             "processor": "sdpa_topcdf16",
             "num_layers": 30,
-            "blocksz": 16,
+            "blocksz": 128,
             # Global thresholds (same for all heads and layers)
             "tau": 0.95,
             "gamma_q": 0.5,
             "gamma_k": 0.5,
+            "model_name": "wan_1_3b_480",
         }
     return config
 
@@ -212,7 +214,7 @@ def get_wan21_1_3b_480x832x81_sdpa_topcdf16_global_config():
 def get_wan21_1_3b_480x832x81_sdpa_cached_config():
 
     config = get_wan21_1_3b_480x832x81_baseline_config()
-    blocksz = 16
+    blocksz = 128
     config["model_name"] = f"wan21_1.3b_480x832x81_sdpa_cached_block{blocksz}"
     config["attnprocessor_kwargs"] = {
             "processor": "sdpa_cached",
@@ -220,6 +222,7 @@ def get_wan21_1_3b_480x832x81_sdpa_cached_config():
             "blocksz": blocksz,
             "thresh": 0.5/32670,  # Same threshold as CUDA cached version
             "compute_cache_at": [0, 5, 12, 20, 30, 40],  # Recompute mask periodically
+            "model_name": "wan_1_3b_480",
         }
     return config
 
@@ -235,11 +238,12 @@ def get_wan21_14b_480x832x81_sdpa_topcdf128_global_config():
     config["attnprocessor_kwargs"] = {
             "processor": "sdpa_topcdf16",
             "num_layers": 40,
-            "blocksz": 128,
+            "blocksz": 16,
             # Global thresholds (same for all heads and layers)
             "tau": 0.95,
             "gamma_q": 0.5,
             "gamma_k": 0.5,
+            "model_name": "wan_14b_480",
         }
     return config
 
@@ -390,6 +394,22 @@ def get_wan21_14b_480x832x81_topcdf_config():
     return config
 
 
+def get_wan21_14b_480x832x81_sdpa_cached_config():
+    """SDPA with naive cache mask for WAN 2.1 14B at 480x832x81."""
+    config = get_wan21_14b_480x832x81_baseline_config()
+    blocksz = 128
+    config["model_name"] = f"wan21_14b_480x832x81_sdpa_cached_block{blocksz}"
+    config["attnprocessor_kwargs"] = {
+            "processor": "sdpa_cached",
+            "num_layers": 40,
+            "blocksz": blocksz,
+            "thresh": 0.6/32760,  # Match 14B cached threshold scale
+            "compute_cache_at": [0, 5, 12, 20, 30, 40],  # Periodic recompute
+            "model_name": "wan_14b_480",
+        }
+    return config
+
+
 
 def get_wan21_14b_720x1280x81_baseline_config():
     return {
@@ -487,6 +507,67 @@ def get_wan21_14b_720x1280x81_topcdf_config():
     return config
 
 
+# SDPA variants for 720x1280x81 (requested in t2v_wan21.py 85-92)
+def get_wan21_1_3b_720x1280x81_sdpa_topcdf_config():
+    config = get_wan21_1_3b_720x1280x81_baseline_config()
+    config["model_name"] = "wan21_1.3b_720x1280x81_sdpa_topcdf"
+    config["attnprocessor_kwargs"] = {
+            "processor": "sdpa_topcdf16",
+            "num_layers": 30,
+            "tau": 0.90,
+            "gamma_q": 0.6,
+            "gamma_k": 0.6,
+            "blocksz": 32,
+            "model_name": "wan_1_3b_720",
+        }
+    return config
+
+
+def get_wan21_1_3b_720x1280x81_sdpa_cached_config():
+    config = get_wan21_1_3b_720x1280x81_baseline_config()
+    blocksz = 64
+    config["model_name"] = f"wan21_1.3b_720x1280x81_sdpa_cached_block{blocksz}"
+    config["attnprocessor_kwargs"] = {
+            "processor": "sdpa_cached",
+            "num_layers": 30,
+            "blocksz": blocksz,
+            "thresh": 0.5/75600,
+            "compute_cache_at": [0, 5, 12, 20, 30, 40],
+            "model_name": "wan_1_3b_720",
+        }
+    return config
+
+
+def get_wan21_14b_720x1280x81_sdpa_topcdf_config():
+    config = get_wan21_14b_720x1280x81_baseline_config()
+    config["model_name"] = "wan21_14b_720x1280x81_sdpa_topcdf"
+    config["attnprocessor_kwargs"] = {
+            "processor": "sdpa_topcdf16",
+            "num_layers": 40,
+            "tau": 0.90,
+            "gamma_q": 0.6,
+            "gamma_k": 0.6,
+            "blocksz": 128,
+            "model_name": "wan_14b_720",
+        }
+    return config
+
+
+def get_wan21_14b_720x1280x81_sdpa_cached_config():
+    config = get_wan21_14b_720x1280x81_baseline_config()
+    blocksz = 16
+    config["model_name"] = f"wan21_14b_720x1280x81_sdpa_cached_block{blocksz}"
+    config["attnprocessor_kwargs"] = {
+            "processor": "sdpa_cached",
+            "num_layers": 40,
+            "blocksz": blocksz,
+            "thresh": 0.5/75600,
+            "compute_cache_at": [0, 5, 12, 20, 30, 40],
+            "model_name": "wan_14b_720",
+        }
+    return config
+
+
 def get_wan21_14b_720x1280x81_bitmaskcached_config():
     return {
         "model_name": "wan21_14b_720x1280x81_bitmaskcached",
@@ -575,6 +656,59 @@ def get_hunyuan_720x1280x81_bitmaskcached_config():
         },
         "fps": 16,
     }
+
+
+def get_hunyuan_720x1280x81_sdpa_cached_config():
+    """Use SDPA with naive cache mask (threshold-based, pure PyTorch) for HunyuanVideo.
+    
+    This is a pure PyTorch implementation that doesn't rely on CUDA kernels,
+    enabling flexible block sizes like 16. Uses column-wise max + threshold
+    for conservative mask generation (OR logic across queries).
+    """
+    config = get_hunyuan_720x1280x81_baseline_config()
+    blocksz = 16
+    config["model_name"] = f"hunyuan_720x1280x81_sdpa_cached_block{blocksz}"
+    config["attnprocessor_kwargs"] = {
+            "processor": "sdpa_cached",
+            "num_layers": 60,
+            "blocksz": blocksz,
+            "thresh": 0.5/75856,  # Same threshold as CUDA cached version
+            "compute_cache_at": [0, 5, 12, 20, 30, 40],  # Recompute mask periodically
+        }
+    return config
+
+
+def get_hunyuan_720x1280x81_sdpa_cached_compressed_config():
+    """Use SDPA with naive cache mask + bit-packed compression (pure PyTorch) for HunyuanVideo."""
+    config = get_hunyuan_720x1280x81_baseline_config()
+    blocksz = 16
+    config["model_name"] = f"hunyuan_720x1280x81_sdpa_cached_compressed_block{blocksz}"
+    config["attnprocessor_kwargs"] = {
+            "processor": "sdpa_cached_compressed",
+            "num_layers": 60,
+            "blocksz": blocksz,
+            "thresh": 0.5/75856,  # Same threshold as CUDA cached version
+            "compute_cache_at": [0, 5, 12, 20, 30, 40],  # Recompute mask periodically
+        }
+    return config
+
+def get_hunyuan_720x1280x81_sdpa_topcdf16_global_config():
+    """Use SDPA Top-CDF with a single global threshold shared across heads for HunyuanVideo.
+
+    Pure PyTorch SDPA path that injects a Top-CDF mask computed at block level.
+    """
+    config = get_hunyuan_720x1280x81_baseline_config()
+    config["model_name"] = "hunyuan_720x1280x81_sdpa_topcdf16_global"
+    config["attnprocessor_kwargs"] = {
+            "processor": "sdpa_topcdf16",
+            "num_layers": 60,
+            "blocksz": 16,
+            # Global thresholds (same for all heads and layers)
+            "tau": 0.95,
+            "gamma_q": 0.5,
+            "gamma_k": 0.5,
+        }
+    return config
 
 
 # https://huggingface.co/docs/diffusers/en/api/pipelines/cogvideox

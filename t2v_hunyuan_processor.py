@@ -6,6 +6,10 @@ import diffusers.models.transformers
 import typing
 import spattn.sparseattn_functionals
 import spattn.mask_utils
+import sdpa_naive_cache
+import sdpa_naive_cache_compressed
+import sdpa_topcdf_mask
+import os
 import time
 
 mask_utils = spattn.mask_utils
@@ -21,6 +25,65 @@ def benchmark_and_run_attn(attn_fn, *args, **kwargs):
     torch.cuda.synchronize()
     t1 = time.time()
     print('time = ', (t1-t0)/N, 's')
+
+
+def sdpa_naive_cache_attn(query, key, value, current_layer, ditrun, **kwargs):
+    """Scaled-Dot-Product Attention with naive cache mask (threshold-based, column-wise max).
+    
+    Pure PyTorch implementation, no CUDA dependencies.
+    """
+    # Inject model name for SDPA output filenames
+    os.environ.setdefault("MODEL_NAME", "hunyuan")
+    blocksz = kwargs.get("blocksz", 16)
+    thresh = kwargs.get("thresh", 0.001)
+    mask_cache = kwargs.get("mask_cache", None)
+    log_flops = os.environ.get("SDPA_LOG_FLOPS", "1").lower() in {"1", "true", "yes"}
+    
+    return sdpa_naive_cache.sdpa_with_naive_cache_mask(
+        query, key, value, 
+        blocksz=blocksz, 
+        thresh=thresh,
+        layer_idx=current_layer, 
+        iter_idx=ditrun, 
+        log_flops=log_flops,
+        mask_cache=mask_cache
+    )
+
+def sdpa_naive_cache_compressed_attn(query, key, value, current_layer, ditrun, **kwargs):
+    """Scaled-Dot-Product Attention with naive cache mask + bit-packing compression (pure PyTorch)."""
+    # Inject model name for SDPA output filenames
+    os.environ.setdefault("MODEL_NAME", "hunyuan")
+    blocksz = kwargs.get("blocksz", 16)
+    thresh = kwargs.get("thresh", 0.001)
+    mask_cache = kwargs.get("mask_cache", None)
+    log_flops = os.environ.get("SDPA_LOG_FLOPS", "1").lower() in {"1", "true", "yes"}
+    
+    return sdpa_naive_cache_compressed.sdpa_with_naive_cache_mask_compressed(
+        query, key, value, 
+        blocksz=blocksz, 
+        thresh=thresh,
+        layer_idx=current_layer, 
+        iter_idx=ditrun, 
+        log_flops=log_flops,
+        mask_cache=mask_cache
+    )
+
+def sdpa_topcdf_attn(query, key, value, current_layer, ditrun, **kwargs):
+    """Scaled-Dot-Product Attention with Top-CDF block mask injected via attn_mask."""
+    # Inject model name for SDPA output filenames
+    os.environ.setdefault("MODEL_NAME", "hunyuan")
+    blocksz = kwargs.get("blocksz", 16)
+    tau = kwargs.get("tau", 0.95)
+    gamma_q = kwargs.get("gamma_q", 0.5)
+    gamma_k = kwargs.get("gamma_k", 0.5)
+    log_flops = os.environ.get("SDPA_LOG_FLOPS", "1").lower() in {"1", "true", "yes"}
+    return sdpa_topcdf_mask.sdpa_with_topcdf_mask(
+        query, key, value,
+        blocksz=blocksz,
+        tau=tau, gamma_q=gamma_q, gamma_k=gamma_k,
+        layer_idx=current_layer, iter_idx=ditrun,
+        log_flops=log_flops
+    )
 
 class CustomProcessor(HunyuanVideoAttnProcessor2_0):
     def __init__(self, *args, **kwargs):
@@ -46,7 +109,26 @@ class CustomProcessor(HunyuanVideoAttnProcessor2_0):
                 self.processor_kwargs["mask_cache"] = mask_utils.CompressedBitMaskCache(kwargs["compute_cache_at"])
             else:
                 self.processor_kwargs["mask_cache"] = mask_utils.BitMaskCache(kwargs["compute_cache_at"])
-
+        elif kwargs["processor"] == "sdpa_cached":
+            # Dense SDPA with naive cache mask (threshold-based, pure PyTorch)
+            if "blocksz" not in self.processor_kwargs:
+                self.processor_kwargs["blocksz"] = 16
+            # Initialize cache
+            compute_cache_at = kwargs.get("compute_cache_at", [0])
+            self.processor_kwargs["mask_cache"] = sdpa_naive_cache.NaiveMaskCache(compute_cache_at)
+            self.attn_fn = sdpa_naive_cache_attn
+        elif kwargs["processor"] == "sdpa_cached_compressed":
+            # Dense SDPA with naive cache mask + bit-packing compression (pure PyTorch)
+            if "blocksz" not in self.processor_kwargs:
+                self.processor_kwargs["blocksz"] = 16
+            compute_cache_at = kwargs.get("compute_cache_at", [0])
+            self.processor_kwargs["mask_cache"] = sdpa_naive_cache_compressed.CompressedBitMaskCache(compute_cache_at)
+            self.attn_fn = sdpa_naive_cache_compressed_attn
+        elif kwargs["processor"] == "sdpa_topcdf16":
+            # Dense SDPA with Top-CDF block mask (pure PyTorch)
+            if "blocksz" not in self.processor_kwargs:
+                self.processor_kwargs["blocksz"] = 16
+            self.attn_fn = sdpa_topcdf_attn
         elif kwargs["processor"] == "topk":
             self.attn_fn = sparseattn_functionals.attn_computed_with_sparse_mask_cuda
         elif kwargs["processor"] == "lsh":
@@ -124,46 +206,11 @@ class CustomProcessor(HunyuanVideoAttnProcessor2_0):
             value = torch.cat([value, encoder_value], dim=2)
 
         # 5. Attention
-        # print("current layer = ", self.current_layer)
-        # print("dtype = ", query.dtype, key.dtype, value.dtype)
-        # print("shape = ", query.shape, key.shape, value.shape)
-        # assert(query.dtype == torch.bfloat16)
-        # assert(key.dtype == torch.bfloat16)
-        # assert(value.dtype == torch.bfloat16)
-        # assert query.shape[0] == key.shape[0] == value.shape[0] == 1
-        # assert query.shape[1] == key.shape[1] == value.shape[1] == 24
-        # assert query.shape[2] == key.shape[2] == value.shape[2] == 75856
-        # assert query.shape[3] == key.shape[3] == value.shape[3] == 128
-
-        # torch.cuda.synchronize()
-        # print("start")
-        # attention_mask[:,:,:,-300:] = True
-        # hidden_states2 = F.scaled_dot_product_attention(
-            # query, key, value, attn_mask=attention_mask, dropout_p=0.0, is_causal=False
-        # ) # attention mask is nonzero here
         hidden_states = self.attn_fn(query, key, value, self.current_layer, self.ditrun, **self.processor_kwargs)
-        # if self.ditrun %13 == 1:
-        #     benchmark_and_run_attn(self.attn_fn, query, key, value, self.current_layer, self.ditrun, **self.processor_kwargs)
-        #     torch.cuda.synchronize()
-        #     t0 = time.time()
-        #     N = 20
-        #     for i in range(N):
-        #         hidden_states = F.scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False)
-        #     torch.cuda.synchronize()
-        #     t1 = time.time()
-        #     print('time = ', (t1-t0)/N, 's')
-
-
-
-        # torch.cuda.synchronize()
-        # print("done, maxdiff = ", (hidden_states-hidden_states2).abs().max())
-        # print((attention_mask[0,0,0,-300:]==False).sum()) # 245
-        # print((attention_mask==False).sum()) # 245
 
         if self.current_layer == self.num_layers-1:
             self.ditrun += 1
         self.current_layer = (self.current_layer + 1) % self.num_layers
-
 
         hidden_states = hidden_states.transpose(1, 2).flatten(2, 3)
         hidden_states = hidden_states.to(query.dtype)

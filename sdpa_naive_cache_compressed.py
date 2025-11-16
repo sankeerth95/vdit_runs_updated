@@ -337,22 +337,12 @@ def sdpa_with_naive_cache_mask_compressed(
             token_idx = torch.arange(start, end, device=q3.device)
             q_block_idx = (token_idx // blocksz).to(torch.long)
             
-            # Allocate per-chunk boolean mask [B, H, W, S]
-            mask_chunk_bhs = torch.empty(B, H, W, S, dtype=torch.bool, device=q3.device)
-            
-            i = 0
-            while i < W:
-                qb = int(q_block_idx[i].item())
-                j = i + 1
-                while j < W and int(q_block_idx[j].item()) == qb:
-                    j += 1
-                rows = j - i
-                
-                allowed_blocks = keep_blocks[:, :, qb, :]  # [B, H, n_k]
-                allowed_tokens = allowed_blocks.repeat_interleave(blocksz, dim=-1)[..., :S]  # [B, H, S]
-                mask_rows = ~allowed_tokens  # [B, H, S] (True = mask out)
-                mask_chunk_bhs[:, :, i:j, :] = mask_rows.unsqueeze(2)  # [B, H, rows, S]
-                i = j
+            # Vectorized build of [B, H, W, S] mask for this chunk from block-level mask
+            # Select per-row query-block decisions and expand keys back to tokens
+            # keep_blocks: [B, H, n_q, n_k], q_block_idx: [W]
+            allowed_blocks_rows = torch.index_select(keep_blocks, dim=2, index=q_block_idx)  # [B, H, W, n_k]
+            allowed_tokens = allowed_blocks_rows.repeat_interleave(blocksz, dim=-1)[..., :S]  # [B, H, W, S]
+            mask_chunk_bhs = ~allowed_tokens  # [B, H, W, S] (True = mask out)
             
             mask_chunk = mask_chunk_bhs.reshape(B * H, W, S)  # [N, W, S]
             

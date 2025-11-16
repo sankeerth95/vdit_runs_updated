@@ -9,6 +9,7 @@ import time
 import os
 import sdpa_topcdf_mask
 import sdpa_naive_cache
+import sdpa_naive_cache_compressed
 
 mask_utils = spattn.mask_utils
 sparseattn_functionals = spattn.sparseattn_functionals
@@ -32,6 +33,9 @@ def sdpa_topcdf_attn(query, key, value, current_layer, ditrun, **kwargs):
       - is_sparse (ignored here)
       - cdfthreshd (tau), simthreshd1 (gamma_q), simthreshd2 (gamma_k)
     """
+    # Inject model name for SDPA output filenames
+    model_name = kwargs.get("model_name", None) or os.environ.get("WAN_MODEL_NAME", "wan_1_3b_480")
+    os.environ["MODEL_NAME"] = model_name
     heads = query.shape[1]
 
     def pick_table(name: str, default: float, reshape: str):
@@ -65,12 +69,35 @@ def sdpa_naive_cache_attn(query, key, value, current_layer, ditrun, **kwargs):
     
     Pure PyTorch implementation, no CUDA dependencies.
     """
+    # Inject model name for SDPA output filenames
+    model_name = kwargs.get("model_name", None) or os.environ.get("WAN_MODEL_NAME", "wan_1_3b_480")
+    os.environ["MODEL_NAME"] = model_name
     blocksz = kwargs.get("blocksz", 16)
     thresh = kwargs.get("thresh", 0.001)
     mask_cache = kwargs.get("mask_cache", None)
     log_flops = os.environ.get("SDPA_LOG_FLOPS", "1").lower() in {"1", "true", "yes"}
     
     return sdpa_naive_cache.sdpa_with_naive_cache_mask(
+        query, key, value, 
+        blocksz=blocksz, 
+        thresh=thresh,
+        layer_idx=current_layer, 
+        iter_idx=ditrun, 
+        log_flops=log_flops,
+        mask_cache=mask_cache
+    )
+
+def sdpa_naive_cache_compressed_attn(query, key, value, current_layer, ditrun, **kwargs):
+    """Scaled-Dot-Product Attention with naive cache mask + bit-packing compression (pure PyTorch)."""
+    # Inject model name for SDPA output filenames
+    model_name = kwargs.get("model_name", None) or os.environ.get("WAN_MODEL_NAME", "wan_1_3b_480")
+    os.environ["MODEL_NAME"] = model_name
+    blocksz = kwargs.get("blocksz", 16)
+    thresh = kwargs.get("thresh", 0.001)
+    mask_cache = kwargs.get("mask_cache", None)
+    log_flops = os.environ.get("SDPA_LOG_FLOPS", "1").lower() in {"1", "true", "yes"}
+    
+    return sdpa_naive_cache_compressed.sdpa_with_naive_cache_mask_compressed(
         query, key, value, 
         blocksz=blocksz, 
         thresh=thresh,
@@ -122,8 +149,8 @@ class MyCustomProcessor(WanAttnProcessor):
                 self.processor_kwargs["blocksz"] = 16
             # Initialize cache
             compute_cache_at = kwargs.get("compute_cache_at", [0])
-            self.processor_kwargs["mask_cache"] = sdpa_naive_cache.NaiveMaskCache(compute_cache_at)
-            self.attn_fn = sdpa_naive_cache_attn
+            self.processor_kwargs["mask_cache"] = sdpa_naive_cache_compressed.CompressedBitMaskCache(compute_cache_at)
+            self.attn_fn = sdpa_naive_cache_compressed_attn
         elif kwargs["processor"] == "lsh":
             raise NotImplementedError("LSH not implemented yet")
         elif kwargs["processor"] == "2x":

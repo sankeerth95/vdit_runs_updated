@@ -78,39 +78,29 @@ if __name__ == '__main__':
 
   import distributedrunconfig
   import argparse
-
-  # prompt = "A beautiful coastal beach in spring, waves lapping on sand by Vincent van Gogh"
-  # prompt = "An oil painting of a couple in formal evening wear going home get caught in a heavy downpour with umbrellas"
-  # config = distributedrunconfig.get_wan21_14b_720x1280x81_baseline_config()
-  # config = distributedrunconfig.get_wan21_14b_720x1280x81_bitmaskcached_config()
-  # config = distributedrunconfig.get_wan21_1_3b_720x1280x81_baseline_config()
-  # config = distributedrunconfig.get_wan21_1_3b_720x1280x81_bitmaskcached_config()
+  # 
+  #config = distributedrunconfig.get_wan21_1_3b_480x832x81_sdpa_topcdf16_global_config()# work, complete
+  #config = distributedrunconfig.get_wan21_1_3b_480x832x81_sdpa_cached_config() # work, complete
+  #config = distributedrunconfig.get_wan21_14b_480x832x81_sdpa_topcdf128_global_config()  # work, complete
+  #config = distributedrunconfig.get_wan21_14b_480x832x81_sdpa_cached_config()  # work, complete
 
 
-  # config = distributedrunconfig.get_wan21_14b_480x832x81_bitmaskcached_config()
-  # config = distributedrunconfig.get_wan21_1_3b_720x1280x81_bitmaskcached_config()
-  # config = distributedrunconfig.get_wan21_14b_720x1280x81_baseline_config()
-  # config = distributedrunconfig.get_wan21_14b_720x1280x81_bitmaskcached_config()
-  # config = distributedrunconfig.get_wan21_1_3b_720x1280x81_baseline_config()
-  # config = distributedrunconfig.get_wan21_1_3b_480x832x81_baseline_config()
-  # config = distributedrunconfig.get_wan21_1_3b_480x832x81_sdpa_topcdf16_global_config()
-  # config = distributedrunconfig.get_wan21_1_3b_480x832x81_sdpa_topcdf16_config()
-  config = distributedrunconfig.get_wan21_1_3b_480x832x81_sdpa_cached_config()
-  # config = distributedrunconfig.get_wan21_14b_480x832x81_sdpa_topcdf128_global_config()
-  
-  # config = distributedrunconfig.get_wan21_1_3b_720x1280x81_topcdf_config()
-  # config = distributedrunconfig.get_wan21_14b_480x832x81_topcdf_config()
-  # config = distributedrunconfig.get_wan21_14b_720x1280x81_topcdf_config()
-  # config = distributedrunconfig.get_wan21_14b_720x1280x81_2x_config()
-  # config = distributedrunconfig.get_wan21_1_3b_720x1280x81_2x_config()
-  # config = distributedrunconfig.get_wan21_1_3b_480x832x81_2x_config()
+  #config = distributedrunconfig.get_wan21_1_3b_720x1280x81_sdpa_topcdf_config() # work, complete
+  #config = distributedrunconfig.get_wan21_1_3b_720x1280x81_sdpa_cached_config() # work, complete
+  config = distributedrunconfig.get_wan21_14b_720x1280x81_sdpa_topcdf_config()  # work
+  #config = distributedrunconfig.get_wan21_14b_720x1280x81_sdpa_cached_config()  # work, need to export SDPA_CHUNK=512
 
-  # config = distributedrunconfig.get_wan21_14b_720x1280x81_bitmaskcached_config()
-  # config = distributedrunconfig.get_wan21_14b_720x1280x81_bitmaskcached_config()
 
   prompt_base = "a horse bending down to drink water from a river"
   output_dir_base = pathlib.Path(config["generated_vids_dir"]) / config["model_name"]
-  filepath_base = output_dir_base / "test.mp4"
+  # Include block size in filename when available
+  _blk = None
+  try:
+    _blk = config.get("attnprocessor_kwargs", {}).get("blocksz", None)
+  except Exception:
+    _blk = None
+  _fname = f"test_{_blk}.mp4" if _blk is not None else "test.mp4"
+  filepath_base = output_dir_base / _fname
 
   argparser = argparse.ArgumentParser()
   argparser.add_argument("--prompt", type=str, default=prompt_base, )

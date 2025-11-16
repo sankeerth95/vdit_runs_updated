@@ -219,22 +219,11 @@ def sdpa_with_topcdf_mask(
             token_idx = torch.arange(start, end, device=q3.device)
             q_block_idx = (token_idx // blocksz).to(torch.long)
 
-            # Allocate per-chunk boolean mask [B,H,W,S]
-            mask_chunk_bhs = torch.empty(B, H, W, S, dtype=torch.bool, device=q3.device)
-
-            i = 0
-            while i < W:
-                qb = int(q_block_idx[i].item())
-                j = i + 1
-                while j < W and int(q_block_idx[j].item()) == qb:
-                    j += 1
-                rows = j - i
-
-                allowed_blocks = keep_blocks[:, :, qb, :]  # [B,H,n_k]
-                allowed_tokens = allowed_blocks.repeat_interleave(blocksz, dim=-1)[..., :S]  # [B,H,S]
-                mask_rows = ~allowed_tokens  # [B,H,S]
-                mask_chunk_bhs[:, :, i:j, :] = mask_rows.unsqueeze(2)  # [B,H,rows,S]
-                i = j
+            # Vectorized build of [B, H, W, S] mask from block-level mask
+            # keep_blocks: [B,H,n_q,n_k], q_block_idx: [W]
+            allowed_blocks_rows = torch.index_select(keep_blocks, dim=2, index=q_block_idx)  # [B,H,W,n_k]
+            allowed_tokens = allowed_blocks_rows.repeat_interleave(blocksz, dim=-1)[..., :S]  # [B,H,W,S]
+            mask_chunk_bhs = ~allowed_tokens  # [B,H,W,S] (True = mask out)
 
             mask_chunk = mask_chunk_bhs.reshape(B * H, W, S)  # [N, W, S]
 
@@ -249,7 +238,9 @@ def sdpa_with_topcdf_mask(
 
             # Accumulate kept counts per head for FLOPs (kept = ~mask)
             if log_flops:
-                kept_per_row = (~mask_chunk).sum(dim=-1).to(torch.float64)   # [N, W]
+                # Compute kept = total - masked, avoiding creating ~mask_chunk
+                masked_per_row = mask_chunk.sum(dim=-1).to(torch.float64)   # [N, W]
+                kept_per_row = mask_chunk.size(-1) - masked_per_row         # [N, W]
                 kept_per_head_step = kept_per_row.sum(dim=1)                 # [N]
                 kept_per_head_step = kept_per_head_step.view(B, H).sum(dim=0)  # [H]
                 kept_per_head_total += kept_per_head_step
@@ -267,8 +258,9 @@ def sdpa_with_topcdf_mask(
                 block_keep_ratio_head_pre = keep_blocks_pre.float().mean(dim=(0, 2, 3)).detach().cpu().numpy()
             except Exception:
                 block_keep_ratio_head_pre = None
-            # Default filename depends on block size unless overridden
-            default_path = f"sdpa_flops{blocksz}block.md"
+            # Default filename: <model>_<blocksz>_<method>.md
+            model = os.environ.get("MODEL_NAME", "model")
+            default_path = f"{model}_{blocksz}_topcdf.md"
             path = os.environ.get("SDPA_FLOPS_PATH", default_path)
             # Write header if file is new/empty
             write_header = False

@@ -220,8 +220,9 @@ def sdpa_with_naive_cache_mask(
             # Block-level keep ratio (before expansion to tokens)
             block_keep_ratio_head = keep_blocks.float().mean(dim=(0, 2, 3)).detach().cpu().numpy()
             
-            # Default filename depends on block size
-            default_path = f"sdpa_naive_cache_flops{blocksz}block.md"
+            # Default filename: <model>_<blocksz>_<method>.md
+            model = os.environ.get("MODEL_NAME", "model")
+            default_path = f"{model}_{blocksz}_cache.md"
             path = os.environ.get("SDPA_FLOPS_PATH", default_path)
             
             # Write header if file is new/empty
@@ -244,4 +245,3 @@ def sdpa_with_naive_cache_mask(
             pass
     
     return o3.reshape(B, H, S, D)
-
